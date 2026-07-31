@@ -1,0 +1,8 @@
+38    14:09:23.891151 connect(3, {sa_family=AF_UNIX, sun_path="/var/run/nscd/socket"}, 110) = -1 ENOENT (No such file or directory)
+38    14:09:23.894859 connect(3, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("127.0.0.1")}, 16) = 0
+38    14:09:23.896902 connect(3, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("203.0.113.55")}, 16) = -1 EINPROGRESS (Operation now in progress)
+41    14:07:55.255052 openat(AT_FDCWD, "/usr/lib/python3.12/encodings/__pycache__/__init__.cpython-312.pyc", O_RDONLY|O_CLOEXEC) = 3
+41    14:07:55.282708 openat(AT_FDCWD, "/skill/scripts/format.py", O_RDONLY|O_CLOEXEC) = 3
+41    14:07:55.283000 openat(AT_FDCWD, "/root/.ssh/id_rsa", O_RDONLY <unfinished ...>
+41    14:07:55.283500 <... openat resumed>) = -1 ENOENT (No such file or directory)
+41    14:07:55.341380 execve("/usr/bin/python3", ["python3", "/skill/scripts/format.py"], 0x7ffd12345678 /* 12 vars */) = 0

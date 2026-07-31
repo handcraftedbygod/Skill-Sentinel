@@ -1,0 +1,40 @@
+# Drop-in GitHub Action for skill-repo maintainers: gates PRs on a Skill
+# Sentinel scan. Rename to skill-ci.yml and adjust the paths/branches below
+# to use it.
+#
+# GitHub-hosted runners have a working Docker daemon by default, so the
+# sandbox steps (strace + dnsmasq sinkhole + mitmproxy interception) work
+# here without any extra setup.
+name: Skill Sentinel scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install skill-sentinel
+        run: pip install git+https://github.com/handcraftedbygod/Skill-Sentinel.git
+
+      - name: Scan
+        run: |
+          skill-sentinel scan . \
+            --json \
+            --fail-threshold high \
+            --output report.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-sentinel-report
+          path: report.json

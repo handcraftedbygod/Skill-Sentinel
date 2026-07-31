@@ -1,1 +1,87 @@
-# Skill-Sentinel
+# Skill Sentinel
+
+**The first practical runtime auditor against SkillCloak-style attacks on Claude Skills.**
+
+A July 2026 academic paper ([arXiv:2607.02357](https://arxiv.org/abs/2607.02357), HKUST) disclosed **SkillCloak** — malicious Claude/Codex skills that hide payloads (self-extracting blobs, obfuscated instructions in `.git/`-style paths) and evade static scanners **more than 90% of the time**. It made Hacker News and thehackernews.com. Every existing "skill security" tool is static-analysis-only — exactly what the paper shows is bypassable.
+
+Skill Sentinel is a **dynamic/behavioral** scanner: it runs a candidate skill inside a disposable, network-sandboxed container and reports what it *actually* does — network destinations (including decrypted HTTPS host/path/body), subprocess spawns, and out-of-scope file access — instead of trusting its `SKILL.md` description. A cheap static pass runs first to catch structural obfuscation (long base64 blobs, `eval`/`exec` of decoded content, hidden executables in dotfile paths).
+
+## What it does, vs. static-only tools
+
+| | Static scanners (`skill-audit`, `skill-check`, ...) | Skill Sentinel |
+|---|---|---|
+| Reads `SKILL.md` / source for red-flag patterns | ✅ | ✅ (first pass) |
+| Actually runs the skill and observes behavior | ❌ | ✅ |
+| Sees decrypted HTTPS request bodies | ❌ | ✅ (via a local mitmproxy CA) |
+| Survives a skill that "looks clean" but self-decodes at runtime | ❌ — this is exactly what SkillCloak exploits | ✅ |
+
+## Install
+
+```
+pip install git+https://github.com/handcraftedbygod/Skill-Sentinel.git
+```
+
+Requires [Docker](https://docs.docker.com/get-docker/) for the sandboxed scan (`--no-sandbox` runs the static pass only, no Docker needed).
+
+## Quickstart
+
+```
+skill-sentinel scan ./my-skill
+skill-sentinel scan https://github.com/someone/some-skill
+skill-sentinel scan ./my-skill --invoke "python scripts/main.py --demo"
+skill-sentinel scan ./my-skill --json -o report.json
+```
+
+## Example output
+
+Scanning Skill Sentinel's own `examples/malicious-sample` test fixture — a synthetic, inert SkillCloak-style skill bundled in this repo specifically to exercise these checks — produces:
+
+```
+# Skill Sentinel report: pdf-formatter
+
+**Risk score:** 25 (CRITICAL)
+
+## Network activity
+- **[CRITICAL]** POST https://evil-collector.io/exfil (request body looks like it may contain a secret)
+
+## Static red flags
+- **[MEDIUM]** Long base64-looking string (396 chars) in format.py
+- **[HIGH]** exec() of decoded content in format.py
+- **[CRITICAL]** Executable content at hidden path .cache/.helper, not referenced by SKILL.md
+```
+
+That `POST` line is real, decrypted request data captured by the sandbox's mitmproxy interception, not a guess from a bare IP — this is the difference dynamic analysis makes. Nothing in that scenario ever reaches the real internet: see [Safety model](#safety-model) below.
+
+## How it works
+
+1. **Static pass** (`sentinel/heuristics.py`) — no Docker needed. Flags long base64-looking blobs, `eval`/`exec` calls whose argument chain includes a decode call, and executable content sitting in dotfile/`.git`-style paths that `SKILL.md` never references.
+2. **Sandbox** (`sentinel/sandbox.py`, `docker/`) — builds a disposable container and runs the skill's bundled scripts under `strace -f -e trace=execve,connect,openat`, capturing subprocess spawns, network connection attempts, and file access outside the skill's own directory. Invocation candidates: a `--invoke` command if given, any usage example parsed out of `SKILL.md`'s own docs, and each bundled script run directly with no arguments — run *all* of them, since each is a different chance to trigger load-time/import-time behavior (exactly when SkillCloak-style payloads self-extract).
+3. **DNS + TLS sinkhole** — every hostname the sandboxed process looks up resolves to loopback, where a local `mitmproxy` instance is listening behind a locally generated CA. A local (self-contained, no host/bridge networking involved) `iptables` redirect catches every outbound port 80/443 attempt — including one that skips DNS entirely and hardcodes a real IP — and routes it into that same interception point, so the report can show the actual host, path, and (undecrypted-if-pinned) request body of an exfiltration attempt instead of a bare IP.
+4. **Report** (`sentinel/report.py`) — merges the static and behavioral findings into a Markdown or JSON report with a risk score, framed as "what it did" vs. "what it claims to do."
+
+## Safety model
+
+- **The container never has your real credentials, SSH keys, or home directory mounted** — only the skill's own files (read-only) plus a scratch tmpdir. Nothing sensitive is ever *available* to leak.
+- **The sandbox runs with `--network none`** — there is no route to the real internet at all, structurally, regardless of what a malicious skill attempts. The DNS/TLS sinkhole above still gets full visibility into what a skill *tried* to do (host, path, decrypted body) without ever letting that attempt actually reach anywhere real.
+- **`--allow-network` opts into real egress** for deeper testing at your own risk — no sinkhole, no interception, `strace` still runs but there's no decrypted host/path/body for that run.
+- If a skill uses certificate pinning, the TLS handshake with the sandbox's CA fails — the report still logs the attempted SNI hostname, just without a decrypted body.
+
+## Scope and limitations (v1)
+
+Deliberately cut, with upgrade paths, rather than silently simplified:
+
+- **No eBPF / kernel-level taint tracking.** Uses `strace` inside the container instead — an already-available Linux tool that captures the same three signal classes (subprocess, network, file) at a fraction of the engineering cost of the original [SkillDetonate](https://arxiv.org/abs/2607.02357) research prototype this project takes inspiration from.
+- **No auto-driven "realistic agent invocation."** v1 runs bundled scripts with no args, a user-supplied `--invoke` command, and any usage example parsed out of `SKILL.md` — this captures load-time/import-time behavior but not multi-turn agent-driven usage. Upgrade path: scripted multi-step invocation once there's a corpus of real invocation patterns to learn from.
+- A skill that hardcodes a real IP and skips DNS entirely still gets caught by the local iptables redirect (see above) — this was a deliberate design goal, not left as a gap.
+
+## CI integration
+
+See [`.github/workflows/skill-ci.yml.example`](.github/workflows/skill-ci.yml.example) — a drop-in GitHub Action that scans a skill repo on every PR and fails the build above a configurable risk threshold (`--fail-threshold`). GitHub-hosted runners have Docker working by default.
+
+## Real-world findings
+
+_Coming soon: results from scanning a batch of real public Claude Skill repos._
+
+## License
+
+MIT — see [LICENSE](LICENSE).

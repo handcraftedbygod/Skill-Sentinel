@@ -1,0 +1,6 @@
+Jul 31 14:08:25 dnsmasq[7]: started, version 2.90 cachesize 150
+Jul 31 14:08:25 dnsmasq[7]: cleared cache
+Jul 31 14:08:26 dnsmasq[7]: query[A] evil-collector.io from 127.0.0.1
+Jul 31 14:08:26 dnsmasq[7]: config evil-collector.io is 127.0.0.1
+Jul 31 14:08:26 dnsmasq[7]: query[AAAA] evil-collector.io from 127.0.0.1
+Jul 31 14:08:26 dnsmasq[7]: config error is REFUSED (EDE: not ready)

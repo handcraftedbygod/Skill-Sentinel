@@ -1,0 +1,166 @@
+"""Parse SKILL.md and discover a skill's bundled files."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
+
+FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?\n)---\s*\n?(.*)", re.DOTALL)
+
+SCRIPT_EXTENSIONS = {".py", ".js", ".ts", ".sh", ".rb", ".pl"}
+
+USAGE_HEADING_RE = re.compile(r"^#{1,6}\s*(usage|examples?)\b", re.IGNORECASE)
+FENCED_CODE_RE = re.compile(r"```(?:[\w+-]*)\n(.*?)```", re.DOTALL)
+SHELL_PROMPT_RE = re.compile(r"^\s*\$\s+(.+)$", re.MULTILINE)
+
+
+class SkillMdNotFoundError(Exception):
+    """Raised when a candidate skill directory has no SKILL.md."""
+
+    def __init__(self, skill_dir: Path):
+        super().__init__(
+            f"No SKILL.md found in {skill_dir}. "
+            "Skill Sentinel expects a Claude Skill directory containing a SKILL.md file."
+        )
+        self.skill_dir = skill_dir
+
+
+class SkillMdParseError(Exception):
+    """Raised when SKILL.md's YAML frontmatter is present but malformed."""
+
+
+@dataclass
+class SkillMetadata:
+    name: str | None
+    description: str | None
+    license: str | None
+    allowed_tools: list | None
+    raw_frontmatter: dict
+    body: str
+    path: Path
+
+
+def parse_skill_md(skill_dir: Path) -> SkillMetadata:
+    """Read and parse <skill_dir>/SKILL.md's YAML frontmatter and body."""
+    skill_md_path = skill_dir / "SKILL.md"
+    if not skill_md_path.is_file():
+        raise SkillMdNotFoundError(skill_dir)
+
+    text = skill_md_path.read_text(encoding="utf-8", errors="replace")
+    match = FRONTMATTER_RE.match(text)
+
+    if match is None:
+        # No frontmatter delimiters at all — tolerate it as metadata-less.
+        return SkillMetadata(
+            name=None,
+            description=None,
+            license=None,
+            allowed_tools=None,
+            raw_frontmatter={},
+            body=text,
+            path=skill_md_path,
+        )
+
+    frontmatter_text, body = match.group(1), match.group(2)
+    try:
+        raw_frontmatter = yaml.safe_load(frontmatter_text) or {}
+    except yaml.YAMLError as exc:
+        raise SkillMdParseError(
+            f"Malformed YAML frontmatter in {skill_md_path}: {exc}"
+        ) from exc
+
+    if not isinstance(raw_frontmatter, dict):
+        raise SkillMdParseError(
+            f"Expected a YAML mapping for frontmatter in {skill_md_path}, got {type(raw_frontmatter).__name__}"
+        )
+
+    return SkillMetadata(
+        name=raw_frontmatter.get("name"),
+        description=raw_frontmatter.get("description"),
+        license=raw_frontmatter.get("license"),
+        allowed_tools=raw_frontmatter.get("allowed-tools") or raw_frontmatter.get("allowed_tools"),
+        raw_frontmatter=raw_frontmatter,
+        body=body,
+        path=skill_md_path,
+    )
+
+
+@dataclass
+class BundledFile:
+    path: Path
+    relative_path: str
+    is_script: bool
+    is_executable: bool
+
+
+def discover_bundled_files(skill_dir: Path) -> list[BundledFile]:
+    """Walk skill_dir's visible surface (excluding SKILL.md and dotfiles/dot-dirs),
+    classifying scripts vs. resources.
+
+    Dot-prefixed paths are deliberately excluded here — that's the skill's normal,
+    visible inventory. Hidden paths are a separate signal handled by
+    heuristics.scan_for_hidden_executable_content().
+    """
+    results: list[BundledFile] = []
+    for path in sorted(skill_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.name == "SKILL.md" and path.parent == skill_dir:
+            continue
+        relative_path = str(path.relative_to(skill_dir))
+        if any(part.startswith(".") for part in Path(relative_path).parts):
+            continue
+        is_executable = bool(path.stat().st_mode & 0o111)
+        is_script = path.suffix in SCRIPT_EXTENSIONS or is_executable
+        results.append(
+            BundledFile(
+                path=path,
+                relative_path=relative_path,
+                is_script=is_script,
+                is_executable=is_executable,
+            )
+        )
+    return results
+
+
+def extract_usage_examples(body: str) -> list[str]:
+    """Pull example invocation commands out of SKILL.md's own Usage/Examples section."""
+    examples: list[str] = []
+
+    lines = body.splitlines()
+    in_usage_section = False
+    section_lines: list[str] = []
+    for line in lines:
+        if line.startswith("#"):
+            if USAGE_HEADING_RE.match(line):
+                in_usage_section = True
+                continue
+            elif in_usage_section:
+                break
+        if in_usage_section:
+            section_lines.append(line)
+
+    section_text = "\n".join(section_lines)
+    if not section_text:
+        return examples
+
+    for code_block in FENCED_CODE_RE.findall(section_text):
+        for line in code_block.splitlines():
+            line = line.strip()
+            prompt_match = SHELL_PROMPT_RE.match(line)
+            if prompt_match:
+                line = prompt_match.group(1).strip()
+            if line and not line.startswith("#"):
+                examples.append(line)
+
+    # De-duplicate while preserving order.
+    seen = set()
+    deduped = []
+    for example in examples:
+        if example not in seen:
+            seen.add(example)
+            deduped.append(example)
+    return deduped
