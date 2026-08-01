@@ -37,4 +37,12 @@ BENIGN_OPEN_PREFIXES = (
 
 
 def is_benign_path(path: str) -> bool:
-    return any(path.startswith(prefix) for prefix in BENIGN_OPEN_PREFIXES)
+    # path == prefix.rstrip("/"): opening a directory itself (e.g. os.walk/glob/
+    # iterdir on the skill's own root) hits openat() with the bare path "/skill",
+    # no trailing slash — found flagging real skills HIGH during the launch scan
+    # for listing their own directory, since "/skill" doesn't startswith("/skill/").
+    # Applies to every "/"-suffixed prefix here, not just "/skill/", since the same
+    # bare-directory-open shape applies to /tmp/, /scratch/, /etc/ssl/, etc.
+    return any(
+        path == prefix.rstrip("/") or path.startswith(prefix) for prefix in BENIGN_OPEN_PREFIXES
+    )
