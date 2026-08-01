@@ -325,9 +325,25 @@ OUTBOUND_DATA_FLAG_RE = re.compile(
 # whitespace between) — "the host system's $(whoami) needs checking against
 # company.com" has the same two ingredients on one line but not touching, and
 # must not match.
+#
+# Also covers a secret-looking env-var reference ($OPENAI_API_KEY,
+# ${AWS_SECRET_ACCESS_KEY}) in the same hostname position — a real gap found
+# while extending this check: SYSTEM_FINGERPRINT_RE only recognizes command
+# substitution of uname/whoami/etc, so a credential exfiltrated by *name*
+# (not gathered by command) was invisible to every check above. Deliberately
+# NOT added to the OUTBOUND_DATA_FLAG_RE branch above — "curl -d
+# \"key=$API_KEY\" https://api.legitimate-vendor.com/auth" is the standard,
+# extremely common shape of a normal API-auth curl example (sending your own
+# key to the service it belongs to), so that combination alone is too noisy
+# to flag. A secret embedded IN the destination hostname has no such
+# legitimate shape — no real API integration ever puts your key in its own
+# hostname — so it stays precise here.
+SECRET_VAR_RE = r"\$\{?[A-Za-z_][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH)[A-Za-z0-9_]*\}?"
 FINGERPRINT_IN_HOSTNAME_RE = re.compile(
-    r"(?:\$\((?:uname|whoami|hostname|env|id)\b[^)]*\)|`(?:uname|whoami|hostname|id)\b[^`]*`)"
-    r"[\w.-]*\.[A-Za-z]{2,}\b"
+    r"(?:\$\((?:uname|whoami|hostname|env|id)\b[^)]*\)|`(?:uname|whoami|hostname|id)\b[^`]*`"
+    rf"|{SECRET_VAR_RE})"
+    r"[\w.-]*\.[A-Za-z]{2,}\b",
+    re.IGNORECASE,
 )
 
 # The classic "curl pipe bash" install pattern (and its PowerShell equivalent,
