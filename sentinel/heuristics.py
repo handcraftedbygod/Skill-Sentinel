@@ -386,6 +386,26 @@ DECODE_EXEC_PIPE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A line *describing or prohibiting* one of the patterns above ("You MUST
+# NEVER pipe downloaded content to a shell", "Refusal to run `curl | bash`
+# style...") matches the same regex as an actual instruction to do it — found
+# producing real false positives in a security-conscious skill's own policy
+# prose and a repo's security-audit table (brycewang-stanford/Auto-Empirical-
+# Research-Skills: several of ~20 curl-pipe-shell hits were this shape, not
+# real instructions). Deliberately narrow, strong negation words only (not
+# "avoid"/"unsafe" — too weak, "to avoid rate limiting, run curl..." is a
+# plausible real instruction) so a genuine attacker instruction's ordinary
+# phrasing ("run this first", "for setup, execute...") is never swallowed.
+# Known incomplete: doesn't help for non-English negation phrasing (e.g. a
+# Chinese "反例"/counter-example table) — accepted, since the alternative
+# (skipping negation words) risks a real attacker exploiting a fake "avoid"
+# preamble; MEDIUM/"worth a human look" severity already means residual noise
+# here isn't alarm-level.
+NEGATION_RE = re.compile(
+    r"\b(never|don'?t|do\s+not|must\s+not|refus\w*|forbidden|prohibited|disallow\w*|not\s+allowed)\b",
+    re.IGNORECASE,
+)
+
 PROSE_INSTRUCTION_EXTENSIONS = {".md", ".txt"}
 
 
@@ -397,6 +417,8 @@ def scan_text_for_prose_instructions(text: str, source: str) -> list[Finding]:
     and send it outbound, on the same line."""
     findings: list[Finding] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
+        if NEGATION_RE.search(line):
+            continue
         if DECODE_EXEC_PIPE_RE.search(line):
             findings.append(
                 Finding(
