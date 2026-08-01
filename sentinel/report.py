@@ -4,6 +4,7 @@ a risk score — framed as "what a skill actually did" vs. "what it claims to do
 from __future__ import annotations
 
 import base64
+import html
 import json
 import posixpath
 import re
@@ -343,3 +344,138 @@ def render_markdown_multi(reports: list[Report]) -> str:
     parts = [f"# Skill Sentinel: {len(reports)} skills found in this repository"]
     parts.extend(render_markdown(r) for r in reports)
     return "\n\n---\n\n".join(parts)
+
+
+# --- HTML rendering ---------------------------------------------------------
+#
+# Self-contained: no CDN/external assets, so the file works offline and as a
+# CI artifact. Everything embedded here (skill names/descriptions, syscall
+# args, semantic-review quotes) ultimately comes from a scanned skill's own,
+# potentially adversarial, content — html.escape() every dynamic value rather
+# than trust it, or a malicious skill's own text becomes a stored-XSS payload
+# in the very report meant to warn about it.
+
+SEVERITY_COLOR = {
+    "low": "#4caf50",
+    "medium": "#e8a300",
+    "high": "#ff8f00",
+    "critical": "#e53935",
+}
+
+HTML_STYLE = """<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 900px;
+         margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.25rem; border-bottom: 1px solid rgba(128,128,128,.4); padding-bottom: .25rem; }
+  h3 { font-size: 1rem; margin-bottom: .5rem; }
+  .risk-badge { display: inline-block; color: #fff; font-weight: 700; padding: .25rem .75rem;
+                border-radius: .25rem; margin: .5rem 0; }
+  .finding { border-left: 4px solid #888; padding: .5rem .75rem; margin: .5rem 0;
+             background: rgba(128,128,128,.08); border-radius: 0 .25rem .25rem 0; }
+  .badge { display: inline-block; color: #fff; font-size: .75rem; font-weight: 700;
+           padding: .1rem .4rem; border-radius: .2rem; margin-right: .5rem; }
+  .detail { font-family: ui-monospace, monospace; font-size: .85rem; margin-top: .25rem;
+            opacity: .8; word-break: break-all; }
+  .source { font-size: .8rem; opacity: .6; margin-top: .25rem; }
+  .empty { opacity: .6; font-style: italic; }
+  .description { opacity: .8; }
+  .invocations code { background: rgba(128,128,128,.15); padding: .1rem .3rem; border-radius: .2rem; }
+  table.summary { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  table.summary th, table.summary td { text-align: left; padding: .4rem .6rem;
+                                        border-bottom: 1px solid rgba(128,128,128,.25); }
+  details > summary { cursor: pointer; font-weight: 600; padding: .5rem 0; }
+</style>"""
+
+
+def _finding_html(f: Finding) -> str:
+    color = SEVERITY_COLOR[f.severity.value]
+    detail = f'<div class="detail">{html.escape(f.detail)}</div>' if f.detail else ""
+    source = f'<div class="source">{html.escape(f.source)}</div>' if f.source else ""
+    return (
+        f'<div class="finding" style="border-left-color:{color}">'
+        f'<span class="badge" style="background:{color}">{f.severity.value.upper()}</span>'
+        f"{html.escape(f.summary)}{detail}{source}</div>"
+    )
+
+
+def _section_html(title: str, findings: list[Finding], empty_message: str) -> str:
+    body = "".join(_finding_html(f) for f in findings) if findings else f'<p class="empty">{empty_message}</p>'
+    return f"<section><h3>{html.escape(title)}</h3>{body}</section>"
+
+
+def _report_body_html(report: Report) -> str:
+    network = [f for f in report.findings if f.category in ("network_request", "network_connection")]
+    subprocess_findings = [f for f in report.findings if f.category in ("sandbox_timeout", "sandbox_no_trace_data")]
+    file_findings = [f for f in report.findings if f.category == "out_of_scope_file_access"]
+    static_findings = [
+        f for f in report.findings if f.category in ("base64_blob", "eval_exec_decode", "hidden_executable")
+    ]
+    semantic_findings = [f for f in report.findings if f.category == "semantic_review"]
+    other_findings = [
+        f
+        for f in report.findings
+        if f not in network + subprocess_findings + file_findings + static_findings + semantic_findings
+    ]
+
+    semantic_empty = "Ran, nothing found." if report.semantic_review_ran else "Not run (use --semantic-review)."
+    description = f'<p class="description">{html.escape(report.skill_description)}</p>' if report.skill_description else ""
+    invocations = ", ".join(f"<code>{html.escape(i)}</code>" for i in report.invocations) or "(none)"
+    risk_color = SEVERITY_COLOR[report.risk_level.value]
+
+    sections = [
+        _section_html("Network activity", network, "No network activity observed."),
+        _section_html("Subprocess / execution", subprocess_findings, "Nothing unusual observed."),
+        _section_html(
+            "Out-of-scope file access", file_findings, "No file access outside the skill's own directory observed."
+        ),
+        _section_html("Static red flags", static_findings, "None found."),
+        _section_html("Semantic / instruction review", semantic_findings, semantic_empty),
+    ]
+    if other_findings:
+        sections.append(_section_html("Other findings", other_findings, ""))
+
+    return (
+        f"{description}"
+        f'<div class="risk-badge" style="background:{risk_color}">'
+        f"{report.risk_level.value.upper()} ({report.risk_score})</div>"
+        f'<p class="invocations">Invocations attempted: {invocations}</p>'
+        f"{''.join(sections)}"
+    )
+
+
+def render_html(report: Report) -> str:
+    return render_html_multi([report])
+
+
+def render_html_multi(reports: list[Report]) -> str:
+    """A repo with one skill renders as a single full report; a collection repo
+    renders a summary table plus a collapsible <details> section per skill —
+    plain HTML, no JavaScript, so it still works as a static CI artifact."""
+    if len(reports) == 1:
+        r = reports[0]
+        title = r.skill_name or r.skill_path
+        body = f"<h1>{html.escape(title)}</h1>{_report_body_html(r)}"
+    else:
+        title = f"Skill Sentinel: {len(reports)} skills"
+        rows = "".join(
+            f"<tr><td>{html.escape(r.skill_name or r.skill_path)}</td>"
+            f'<td><span class="badge" style="background:{SEVERITY_COLOR[r.risk_level.value]}">'
+            f"{r.risk_level.value.upper()}</span></td><td>{r.risk_score}</td></tr>"
+            for r in reports
+        )
+        summary_table = (
+            '<table class="summary"><thead><tr><th>Skill</th><th>Risk</th><th>Score</th></tr>'
+            f"</thead><tbody>{rows}</tbody></table>"
+        )
+        details = "".join(
+            f"<details><summary>{html.escape(r.skill_name or r.skill_path)} — "
+            f"{r.risk_level.value.upper()} ({r.risk_score})</summary>{_report_body_html(r)}</details>"
+            for r in reports
+        )
+        body = f"<h1>{html.escape(title)}</h1>{summary_table}{details}"
+
+    return (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        f"<title>{html.escape(title)}</title>{HTML_STYLE}</head><body>{body}</body></html>"
+    )

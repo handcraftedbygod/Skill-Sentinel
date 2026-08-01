@@ -1,6 +1,7 @@
 """Regression coverage for sentinel.report's scoring/grouping behavior."""
 
-from sentinel.report import sandbox_result_findings
+from sentinel.findings import Finding, Severity
+from sentinel.report import Report, render_html, render_html_multi, sandbox_result_findings
 from sentinel.sandbox import HttpFlow, SandboxRunResult, StraceEvent
 
 
@@ -77,3 +78,69 @@ def test_a_couple_of_scattered_opens_stay_individual():
     findings = sandbox_result_findings(result)
     file_findings = [f for f in findings if f.category == "out_of_scope_file_access"]
     assert len(file_findings) == 2
+
+
+def _clean_report(name: str = "clean-skill") -> Report:
+    return Report(
+        skill_path=f"/tmp/{name}",
+        skill_name=name,
+        skill_description="A totally normal skill.",
+        findings=[],
+        risk_score=0,
+        risk_level=Severity.LOW,
+        invocations=["python3 main.py"],
+    )
+
+
+def test_render_html_is_well_formed_and_shows_clean_state():
+    output = render_html(_clean_report())
+    assert output.startswith("<!doctype html>")
+    assert output.rstrip().endswith("</html>")
+    assert "clean-skill" in output
+    assert "LOW" in output
+    assert "None found" in output  # static red flags empty state
+    assert "Not run" in output  # semantic review not run, default False
+
+
+def test_render_html_escapes_adversarial_finding_content():
+    # Regression guard: everything embedded here (skill names, finding
+    # summaries/details/sources) ultimately comes from a scanned skill's own,
+    # potentially adversarial, content. A malicious skill naming itself
+    # "<script>alert(1)</script>" must not become live markup in the very
+    # report meant to warn about it.
+    report = Report(
+        skill_path="/tmp/evil",
+        skill_name="<script>alert(1)</script>",
+        skill_description=None,
+        findings=[
+            Finding(
+                category="out_of_scope_file_access",
+                severity=Severity.HIGH,
+                summary='<img src=x onerror=alert(1)>',
+                detail="<b>bold detail</b>",
+                source="<i>source</i>",
+            )
+        ],
+        risk_score=7,
+        risk_level=Severity.HIGH,
+        invocations=[],
+    )
+    output = render_html(report)
+    assert "<script>alert(1)</script>" not in output
+    assert "<img src=x onerror=alert(1)>" not in output
+    assert "&lt;script&gt;" in output
+    assert "&lt;img src=x onerror=alert(1)&gt;" in output
+
+
+def test_render_html_multi_collapses_to_single_report():
+    assert render_html_multi([_clean_report()]) == render_html(_clean_report())
+
+
+def test_render_html_multi_shows_summary_table_and_per_skill_sections():
+    reports = [_clean_report("skill-a"), _clean_report("skill-b")]
+    output = render_html_multi(reports)
+    assert "2 skills" in output
+    assert '<table class="summary">' in output
+    assert output.count("<details>") == 2
+    assert "skill-a" in output
+    assert "skill-b" in output

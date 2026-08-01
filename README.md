@@ -33,10 +33,13 @@ skill-sentinel scan ./my-skill
 skill-sentinel scan https://github.com/someone/some-skill
 skill-sentinel scan ./my-skill --invoke "python scripts/main.py --demo"
 skill-sentinel scan ./my-skill --json -o report.json
+skill-sentinel scan ./my-skill --html
 ANTHROPIC_API_KEY=sk-... skill-sentinel scan ./my-skill --semantic-review
 ```
 
-A single git URL can point at a collection repo — one repo bundling many skills, each in its own subdirectory, with no `SKILL.md` at the root. Skill Sentinel finds every one of them and scans each independently (see `sentinel/skillmd.py`'s `discover_skill_directories`); the report becomes a list of per-skill reports instead of a single one.
+A single git URL can point at a collection repo — one repo bundling many skills, each in its own subdirectory, with no `SKILL.md` at the root. Skill Sentinel finds every one of them and scans each independently (see `sentinel/skillmd.py`'s `discover_skill_directories`); the report becomes a list of per-skill reports instead of a single one, with per-skill progress printed to stderr as it goes (`[3/87] scanning some-skill... -> LOW (0)`) so a large collection scan isn't a silent black box.
+
+`--html` writes a self-contained, styled HTML report alongside the normal terminal output — severity-colored findings, a summary table for collection scans, collapsible per-skill sections — good for a full visual review or as a CI artifact you can download and open. No external assets, works offline. Terminal output itself gets severity-colored automatically when stdout is a real terminal (never when piped to a file or used with `--json`, which stay exactly what they claim to be).
 
 ## Example output
 

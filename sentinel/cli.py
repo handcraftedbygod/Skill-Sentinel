@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
 
 from sentinel.findings import Severity
 from sentinel.heuristics import run_heuristics
-from sentinel.report import build_report, render_json_multi, render_markdown_multi
+from sentinel.report import build_report, render_html_multi, render_json_multi, render_markdown_multi
 from sentinel.sandbox import (
     DockerUnavailableError,
     SentinelError,
@@ -29,6 +30,30 @@ from sentinel.skillmd import (
 )
 
 FAIL_THRESHOLD_CHOICES = ["low", "medium", "high", "critical"]
+
+DEFAULT_HTML_REPORT = "skill-sentinel-report.html"
+
+# Terminal-only polish: color the severity tags render_markdown() already
+# produces rather than build a separate colored-text renderer. Applied only
+# when writing to a real terminal (never to -o FILE or --json, which must
+# stay exactly what they claim to be — plain text / valid JSON).
+ANSI_RESET = "\033[0m"
+ANSI_BY_SEVERITY = {
+    "LOW": "\033[32m",  # green
+    "MEDIUM": "\033[33m",  # yellow
+    "HIGH": "\033[38;5;208m",  # orange
+    "CRITICAL": "\033[1;31m",  # bold red
+}
+_SEVERITY_TAG_RE = re.compile(r"\*\*\[(LOW|MEDIUM|HIGH|CRITICAL)\]\*\*|\((LOW|MEDIUM|HIGH|CRITICAL)\)")
+
+
+def _colorize_severity_tags(markdown: str) -> str:
+    def _replace(match: re.Match) -> str:
+        severity = match.group(1) or match.group(2)
+        color = ANSI_BY_SEVERITY[severity]
+        return f"{color}{match.group(0)}{ANSI_RESET}"
+
+    return _SEVERITY_TAG_RE.sub(_replace, markdown)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -71,6 +96,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "or behavioral checks). Costs one Anthropic API call per skill; requires "
         "ANTHROPIC_API_KEY. Opt-in — off by default.",
     )
+    scan.add_argument(
+        "--html",
+        metavar="FILE",
+        nargs="?",
+        const=DEFAULT_HTML_REPORT,
+        help=f"Also write a self-contained HTML report to FILE (default: {DEFAULT_HTML_REPORT}) "
+        "for a full visual review, in addition to the normal terminal/--json/-o output. "
+        "No external assets — works offline and as a CI artifact.",
+    )
 
     return parser
 
@@ -106,12 +140,20 @@ def _run_scan(args: argparse.Namespace) -> int:
 
         docker_checked = False
         reports = []
-        for skill_dir in skill_dirs:
+        total = len(skill_dirs)
+        for idx, skill_dir in enumerate(skill_dirs, start=1):
             try:
                 metadata = parse_skill_md(skill_dir)
             except (SkillMdNotFoundError, SkillMdParseError) as exc:
                 print(f"warning: skipping {skill_dir}: {exc}", file=sys.stderr)
                 continue
+
+            # Only for collection scans (total > 1) — a single-skill scan doesn't
+            # need progress noise, but scanning a repo with dozens or hundreds of
+            # skills with zero visibility into where it is was a real pain point
+            # while building this tool.
+            if total > 1:
+                print(f"[{idx}/{total}] scanning {metadata.name or skill_dir.name}...", file=sys.stderr)
 
             heuristic_findings = run_heuristics(skill_dir)
             bundled_files = discover_bundled_files(skill_dir)
@@ -149,15 +191,20 @@ def _run_scan(args: argparse.Namespace) -> int:
                         print(f"error: {exc}", file=sys.stderr)
                         return 4
 
-            reports.append(
-                build_report(
-                    skill_dir, metadata, heuristic_findings, sandbox_results, candidates, semantic_review_ran
-                )
+            report = build_report(
+                skill_dir, metadata, heuristic_findings, sandbox_results, candidates, semantic_review_ran
             )
+            reports.append(report)
+            if total > 1:
+                print(f"    -> {report.risk_level.value.upper()} ({report.risk_score})", file=sys.stderr)
 
         if not reports:
             print(f"error: No valid SKILL.md could be parsed under {source_dir}", file=sys.stderr)
             return 2
+
+    if args.html:
+        Path(args.html).write_text(render_html_multi(reports), encoding="utf-8")
+        print(f"HTML report written to {args.html}", file=sys.stderr)
 
     output = render_json_multi(reports) if args.json else render_markdown_multi(reports)
     if args.output:
@@ -167,6 +214,10 @@ def _run_scan(args: argparse.Namespace) -> int:
         # arbitrary Unicode (em dashes, non-English text, ...), and the console's
         # default encoding (e.g. cp1252 on Windows) can't represent all of it —
         # print() would crash the whole scan over the skill's own text content.
+        # Color only applies here: a real terminal, plain Markdown — never to
+        # -o FILE (must stay plain text) or --json (must stay valid JSON).
+        if not args.json and sys.stdout.isatty():
+            output = _colorize_severity_tags(output)
         sys.stdout.buffer.write(output.encode("utf-8", errors="replace"))
         sys.stdout.buffer.write(b"\n")
 
