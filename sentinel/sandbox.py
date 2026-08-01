@@ -272,6 +272,18 @@ def strace_execve_events(events: list[StraceEvent]) -> list[StraceEvent]:
     return [e for e in events if e.syscall == "execve"]
 
 
+def _is_node_package_json_probe(path: str, result: str) -> bool:
+    """Node's module resolver walks every ancestor directory above cwd looking for
+    the nearest package.json (package-boundary / ESM "type" detection) — this
+    fires on essentially any `node` invocation, not something the skill did.
+    WORKDIR is always /skill, so the only such probe landing outside /skill is
+    the root-level lookup, and it's always ENOENT (the sandbox image ships no
+    /package.json). Only the failed probe is allowlisted — a real, present
+    package.json outside /skill would still be notable.
+    """
+    return path == "/package.json" and "ENOENT" in result
+
+
 def strace_notable_openat_events(events: list[StraceEvent]) -> list[StraceEvent]:
     notable = []
     for e in events:
@@ -288,8 +300,11 @@ def strace_notable_openat_events(events: list[StraceEvent]) -> list[StraceEvent]
             # own "should scan clean" example. A path that escapes via ../.. still
             # normalizes outside /skill and is correctly flagged (path traversal).
             raw_path = posixpath.normpath(posixpath.join("/skill", raw_path))
-        if not is_benign_path(raw_path):
-            notable.append(e)
+        if is_benign_path(raw_path):
+            continue
+        if _is_node_package_json_probe(raw_path, e.result):
+            continue
+        notable.append(e)
     return notable
 
 
