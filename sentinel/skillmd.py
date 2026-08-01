@@ -165,7 +165,10 @@ def discover_bundled_files(skill_dir: Path) -> list[BundledFile]:
     for path in sorted(skill_dir.rglob("*")):
         if not path.is_file():
             continue
-        if path.name == "SKILL.md" and path.parent == skill_dir:
+        # .lower(): a lowercase "skill.md" is still the skill's own root file
+        # (see find_skill_md_file) — without case-insensitivity here, it'd be
+        # treated as an ordinary bundled file and scanned twice.
+        if path.name.lower() == "skill.md" and path.parent == skill_dir:
             continue
         # .as_posix(), not str(): these paths get shell-quoted and run inside a
         # Linux container. A bare str() gives backslash separators on Windows

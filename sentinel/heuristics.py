@@ -294,6 +294,11 @@ def scan_for_hidden_executable_content(skill_dir: Path) -> list[Finding]:
 # is precise enough to catch with a cheap static regex too: real curl/wget
 # usage docs essentially never combine system fingerprinting with an outbound
 # POST/upload flag on one line.
+#
+# Scanned across every bundled prose file (.md/.txt), not just SKILL.md
+# itself — a skill's own workflow commonly says "read references/setup.md for
+# details," so the same attack works one file removed from SKILL.md and would
+# otherwise evade a SKILL.md-only check entirely.
 EXFIL_COMMAND_RE = re.compile(r"\b(curl|wget|Invoke-WebRequest|Invoke-RestMethod)\b", re.IGNORECASE)
 SYSTEM_FINGERPRINT_RE = re.compile(
     r"\$\((?:uname|whoami|hostname|env|id)\b|`(?:uname|whoami|hostname|id)\b"
@@ -303,28 +308,65 @@ OUTBOUND_DATA_FLAG_RE = re.compile(
     r"--data(?:-binary|-raw)?\b|\s-d\s|--upload-file\b|\s-F\s|-X\s+(?:POST|PUT)\b", re.IGNORECASE
 )
 
+# The classic "curl pipe bash" install pattern (and its PowerShell equivalent,
+# "iwr ... | iex") is one of the most well-known malware-distribution vectors
+# in the industry — reframed here as a prose instruction rather than a script,
+# it's arguably more dangerous than the exfil pattern above: it's arbitrary
+# remote code execution, not just data leakage, and just as invisible to
+# every other check (never auto-invoked, since it's plain text, not a
+# bundled/invocable script).
+REMOTE_EXEC_PIPE_RE = re.compile(
+    r"\b(curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(bash|sh|zsh|python3?|node|pwsh|powershell)\b"
+    r"|\b(Invoke-WebRequest|Invoke-RestMethod|iwr)\b[^\n|]*\|\s*(?:iex|Invoke-Expression)\b",
+    re.IGNORECASE,
+)
 
-def scan_skill_md_body_for_exfil_instructions(body: str, source: str) -> list[Finding]:
-    """Flag inline shell commands in SKILL.md's own prose — not a bundled
-    script — that gather system-identifying info via command substitution and
-    send it outbound via curl/wget on the same line."""
+PROSE_INSTRUCTION_EXTENSIONS = {".md", ".txt"}
+
+
+def scan_text_for_prose_instructions(text: str, source: str) -> list[Finding]:
+    """Flag inline shell commands in prose (SKILL.md or a referenced .md/.txt
+    file) — not a bundled script — that either pipe a remote download straight
+    into a shell/interpreter, or gather system-identifying info via command
+    substitution and send it outbound, on the same line."""
     findings: list[Finding] = []
-    for line_no, line in enumerate(body.splitlines(), start=1):
-        if not EXFIL_COMMAND_RE.search(line):
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if REMOTE_EXEC_PIPE_RE.search(line):
+            findings.append(
+                Finding(
+                    category="skill_md_remote_exec_instruction",
+                    severity=Severity.CRITICAL,
+                    summary="Prose instructions tell the agent to pipe a remote download "
+                    "straight into a shell/interpreter — a plain-text instruction, not a "
+                    "bundled script",
+                    detail=f"line {line_no}: {line.strip()[:200]}",
+                    source=source,
+                )
+            )
             continue
-        if SYSTEM_FINGERPRINT_RE.search(line) and OUTBOUND_DATA_FLAG_RE.search(line):
+        if EXFIL_COMMAND_RE.search(line) and SYSTEM_FINGERPRINT_RE.search(line) and OUTBOUND_DATA_FLAG_RE.search(line):
             findings.append(
                 Finding(
                     category="skill_md_exfil_instruction",
                     severity=Severity.CRITICAL,
-                    summary="SKILL.md's own instructions tell the agent to run a command that "
-                    "gathers system-identifying info and sends it outbound — a plain-text "
-                    "instruction, not a bundled script",
+                    summary="Prose instructions tell the agent to run a command that gathers "
+                    "system-identifying info and sends it outbound — a plain-text instruction, "
+                    "not a bundled script",
                     detail=f"line {line_no}: {line.strip()[:200]}",
                     source=source,
                 )
             )
     return findings
+
+
+def scan_file_for_prose_instructions(path: Path) -> list[Finding]:
+    if path.suffix not in PROSE_INSTRUCTION_EXTENSIONS:
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return scan_text_for_prose_instructions(text, str(path))
 
 
 def run_heuristics(skill_dir: Path) -> list[Finding]:
@@ -334,6 +376,7 @@ def run_heuristics(skill_dir: Path) -> list[Finding]:
     for bundled_file in discover_bundled_files(skill_dir):
         findings.extend(scan_file_for_base64_blobs(bundled_file.path))
         findings.extend(scan_file_for_eval_exec_decode(bundled_file.path))
+        findings.extend(scan_file_for_prose_instructions(bundled_file.path))
 
     findings.extend(scan_for_hidden_executable_content(skill_dir))
 
@@ -344,6 +387,6 @@ def run_heuristics(skill_dir: Path) -> list[Finding]:
         except OSError:
             body = None
         if body is not None:
-            findings.extend(scan_skill_md_body_for_exfil_instructions(body, str(skill_md_path)))
+            findings.extend(scan_text_for_prose_instructions(body, str(skill_md_path)))
 
     return findings

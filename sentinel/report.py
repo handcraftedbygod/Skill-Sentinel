@@ -31,6 +31,16 @@ SEVERITY_WEIGHT = {
 
 SECRET_LOOKING_RE_PARTS = ("key", "token", "secret", "password", "credential", "api_key")
 
+# Findings that come from reading file content, not from running the skill —
+# grouped under "Static red flags" in both the Markdown and HTML renderers.
+STATIC_FINDING_CATEGORIES = (
+    "base64_blob",
+    "eval_exec_decode",
+    "hidden_executable",
+    "skill_md_exfil_instruction",
+    "skill_md_remote_exec_instruction",
+)
+
 # Below this many near-identical findings (same directory for file opens, same
 # method+host+path for network requests), list each individually — still useful
 # detail. At or above it, collapse into one finding — otherwise a bulk/retry
@@ -288,11 +298,7 @@ def render_markdown(report: Report) -> str:
         lines.append("- No file access outside the skill's own directory observed.")
     lines.append("")
 
-    static_findings = [
-        f
-        for f in report.findings
-        if f.category in ("base64_blob", "eval_exec_decode", "hidden_executable", "skill_md_exfil_instruction")
-    ]
+    static_findings = [f for f in report.findings if f.category in STATIC_FINDING_CATEGORIES]
     lines.append("## Static red flags")
     if static_findings:
         for f in static_findings:
@@ -408,9 +414,7 @@ def _report_body_html(report: Report) -> str:
     network = [f for f in report.findings if f.category in ("network_request", "network_connection")]
     subprocess_findings = [f for f in report.findings if f.category in ("sandbox_timeout", "sandbox_no_trace_data")]
     file_findings = [f for f in report.findings if f.category == "out_of_scope_file_access"]
-    static_findings = [
-        f for f in report.findings if f.category in ("base64_blob", "eval_exec_decode", "hidden_executable", "skill_md_exfil_instruction")
-    ]
+    static_findings = [f for f in report.findings if f.category in STATIC_FINDING_CATEGORIES]
     semantic_findings = [f for f in report.findings if f.category == "semantic_review"]
     other_findings = [
         f
