@@ -29,6 +29,10 @@ BENIGN_OPEN_PREFIXES = (
     "/etc/gai.conf",
     "/etc/protocols",
     "/etc/services",
+    # The sandbox's own mitmproxy CA — Node is deliberately pointed at this via
+    # NODE_EXTRA_CA_CERTS (see docker/Dockerfile) so TLS interception works.
+    # Reading it is our own infrastructure, not the skill doing anything notable.
+    "/etc/mitmproxy/",
 )
 
 

@@ -103,7 +103,12 @@ def _run_scan(args: argparse.Namespace) -> int:
     if args.output:
         Path(args.output).write_text(output, encoding="utf-8")
     else:
-        print(output)
+        # Not print(): a scanned skill's own description/findings can contain
+        # arbitrary Unicode (em dashes, non-English text, ...), and the console's
+        # default encoding (e.g. cp1252 on Windows) can't represent all of it —
+        # print() would crash the whole scan over the skill's own text content.
+        sys.stdout.buffer.write(output.encode("utf-8", errors="replace"))
+        sys.stdout.buffer.write(b"\n")
 
     if args.fail_threshold:
         threshold = Severity(args.fail_threshold)

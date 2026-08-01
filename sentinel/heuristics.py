@@ -30,9 +30,29 @@ JS_EVAL_DECODE_RE = re.compile(
 
 TEXT_EXTENSIONS = {".py", ".js", ".ts", ".sh", ".rb", ".pl", ".txt", ".md", ".json", ".yaml", ".yml"}
 
+# git ships these ~13 sample hooks, byte-identical, in every `git init`/`git clone`.
+# They're executable/shebanged by git itself, never attacker-controlled, and never
+# run (git only executes a hook file WITHOUT the .sample suffix) — flagging them is
+# a guaranteed false positive on literally every git-cloned skill. Deliberately
+# narrow: this does NOT exclude .git/ wholesale, since hiding a real payload behind
+# .git/ is exactly the SkillCloak technique this heuristic exists to catch — only
+# this one well-known, inert, git-shipped pattern is allowlisted.
+GIT_HOOK_SAMPLE_RE = re.compile(r"^\.git/hooks/[^/]+\.sample$")
+
 
 def scan_file_for_base64_blobs(path: Path, min_length: int = 200) -> list[Finding]:
-    """Flag long base64-looking runs — a hallmark of self-extracting payloads."""
+    """Flag long base64-looking runs in source/text files — a hallmark of
+    self-extracting payloads (arXiv:2607.02357's structural obfuscation).
+
+    Restricted to TEXT_EXTENSIONS, same as scan_file_for_eval_exec_decode: the
+    threat model is a payload embedded in source code, not arbitrary bytes.
+    Without this, binary image data (which randomly satisfies the base64
+    charset over a long enough run) and legitimate embedded data: URIs in SVGs
+    get flagged identically to an actual self-decoding payload.
+    """
+    if path.suffix not in TEXT_EXTENSIONS:
+        return []
+
     findings: list[Finding] = []
     try:
         data = path.read_bytes()
@@ -133,12 +153,18 @@ def scan_for_hidden_executable_content(skill_dir: Path) -> list[Finding]:
         root_path = Path(root)
         for filename in filenames:
             file_path = root_path / filename
-            relative_path = str(file_path.relative_to(skill_dir))
+            # .as_posix(), not str(): this gets pattern-matched below and shown in
+            # the report — a bare str() gives backslash separators on Windows,
+            # which wouldn't match GIT_HOOK_SAMPLE_RE and reads oddly to users.
+            relative_path = file_path.relative_to(skill_dir).as_posix()
             if relative_path in referenced:
                 continue
 
             is_hidden = any(part.startswith(".") for part in Path(relative_path).parts)
             if not is_hidden:
+                continue
+
+            if GIT_HOOK_SAMPLE_RE.match(relative_path):
                 continue
 
             is_executable = False
