@@ -309,3 +309,20 @@ def render_markdown(report: Report) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def render_json_multi(reports: list[Report]) -> str:
+    """A repo with one skill renders identically to render_json(); a collection
+    repo (multiple SKILL.md subdirectories, see skillmd.discover_skill_directories)
+    renders as a JSON array instead of silently reporting only the first one."""
+    if len(reports) == 1:
+        return render_json(reports[0])
+    return json.dumps([r.to_dict() for r in reports], indent=2)
+
+
+def render_markdown_multi(reports: list[Report]) -> str:
+    if len(reports) == 1:
+        return render_markdown(reports[0])
+    parts = [f"# Skill Sentinel: {len(reports)} skills found in this repository"]
+    parts.extend(render_markdown(r) for r in reports)
+    return "\n\n---\n\n".join(parts)

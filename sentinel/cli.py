@@ -9,7 +9,7 @@ from pathlib import Path
 
 from sentinel.findings import Severity
 from sentinel.heuristics import run_heuristics
-from sentinel.report import build_report, render_json, render_markdown
+from sentinel.report import build_report, render_json_multi, render_markdown_multi
 from sentinel.sandbox import (
     DockerUnavailableError,
     SentinelError,
@@ -18,7 +18,13 @@ from sentinel.sandbox import (
     resolve_skill_source,
     run_skill_in_sandbox,
 )
-from sentinel.skillmd import SkillMdNotFoundError, SkillMdParseError, discover_bundled_files, parse_skill_md
+from sentinel.skillmd import (
+    SkillMdNotFoundError,
+    SkillMdParseError,
+    discover_bundled_files,
+    discover_skill_directories,
+    parse_skill_md,
+)
 
 FAIL_THRESHOLD_CHOICES = ["low", "medium", "high", "critical"]
 
@@ -62,44 +68,62 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def _run_scan(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix="skill-sentinel-") as tmpdir:
         try:
-            skill_dir = resolve_skill_source(args.path_or_url, Path(tmpdir))
+            source_dir = resolve_skill_source(args.path_or_url, Path(tmpdir))
         except SentinelError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
 
-        try:
-            metadata = parse_skill_md(skill_dir)
-        except (SkillMdNotFoundError, SkillMdParseError) as exc:
-            print(f"error: {exc}", file=sys.stderr)
+        # Most sources are a single skill (SKILL.md at source_dir's own root).
+        # Some are collections — one repo bundling many skills, each in its own
+        # subdirectory, with no root SKILL.md at all — see
+        # skillmd.discover_skill_directories.
+        skill_dirs = discover_skill_directories(source_dir)
+        if not skill_dirs:
+            print(f"error: {SkillMdNotFoundError(source_dir)}", file=sys.stderr)
             return 2
 
-        heuristic_findings = run_heuristics(skill_dir)
-        bundled_files = discover_bundled_files(skill_dir)
-        candidates = build_invocation_candidates(skill_dir, bundled_files, metadata.body, args.invoke)
-
-        sandbox_results = None
-        if not args.no_sandbox:
+        docker_checked = False
+        reports = []
+        for skill_dir in skill_dirs:
             try:
-                ensure_docker_available()
-            except DockerUnavailableError as exc:
-                print(f"error: {exc}", file=sys.stderr)
-                return 3
+                metadata = parse_skill_md(skill_dir)
+            except (SkillMdNotFoundError, SkillMdParseError) as exc:
+                print(f"warning: skipping {skill_dir}: {exc}", file=sys.stderr)
+                continue
 
-            if candidates:
-                try:
-                    sandbox_results = run_skill_in_sandbox(
-                        skill_dir,
-                        candidates,
-                        allow_network=args.allow_network,
-                        timeout_s=args.timeout,
-                    )
-                except SentinelError as exc:
-                    print(f"error: {exc}", file=sys.stderr)
-                    return 4
+            heuristic_findings = run_heuristics(skill_dir)
+            bundled_files = discover_bundled_files(skill_dir)
+            candidates = build_invocation_candidates(skill_dir, bundled_files, metadata.body, args.invoke)
 
-        report = build_report(skill_dir, metadata, heuristic_findings, sandbox_results, candidates)
+            sandbox_results = None
+            if not args.no_sandbox:
+                if not docker_checked:
+                    try:
+                        ensure_docker_available()
+                    except DockerUnavailableError as exc:
+                        print(f"error: {exc}", file=sys.stderr)
+                        return 3
+                    docker_checked = True
 
-    output = render_json(report) if args.json else render_markdown(report)
+                if candidates:
+                    try:
+                        sandbox_results = run_skill_in_sandbox(
+                            skill_dir,
+                            candidates,
+                            allow_network=args.allow_network,
+                            timeout_s=args.timeout,
+                        )
+                    except SentinelError as exc:
+                        print(f"error: {exc}", file=sys.stderr)
+                        return 4
+
+            reports.append(build_report(skill_dir, metadata, heuristic_findings, sandbox_results, candidates))
+
+        if not reports:
+            print(f"error: No valid SKILL.md could be parsed under {source_dir}", file=sys.stderr)
+            return 2
+
+    output = render_json_multi(reports) if args.json else render_markdown_multi(reports)
     if args.output:
         Path(args.output).write_text(output, encoding="utf-8")
     else:
@@ -112,7 +136,7 @@ def _run_scan(args: argparse.Namespace) -> int:
 
     if args.fail_threshold:
         threshold = Severity(args.fail_threshold)
-        if report.risk_level.rank >= threshold.rank:
+        if any(r.risk_level.rank >= threshold.rank for r in reports):
             return 1
     return 0
 

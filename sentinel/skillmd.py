@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -86,6 +87,25 @@ def parse_skill_md(skill_dir: Path) -> SkillMetadata:
         body=body,
         path=skill_md_path,
     )
+
+
+def discover_skill_directories(root: Path) -> list[Path]:
+    """Find every directory under root that directly contains a SKILL.md,
+    skipping hidden/dot directories (VCS internals, CI mirrors, build output —
+    the same surface heuristics.scan_for_hidden_executable_content() treats as
+    "not the skill's normal, visible inventory").
+
+    Most repos are a single skill (SKILL.md at root, returned as a 1-item list).
+    Some are collections — one repo bundling many skills, each in its own
+    subdirectory — and have no root SKILL.md at all; without this, those are
+    invisible to the scanner entirely.
+    """
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        if "SKILL.md" in filenames:
+            found.append(Path(dirpath))
+    return sorted(found)
 
 
 @dataclass
