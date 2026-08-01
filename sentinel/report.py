@@ -30,14 +30,16 @@ SEVERITY_WEIGHT = {
 
 SECRET_LOOKING_RE_PARTS = ("key", "token", "secret", "password", "credential", "api_key")
 
-# Below this many notable opens under the same directory, list each individually
-# (still useful detail). At or above it, collapse into one finding — otherwise a
-# single bulk operation (e.g. a self-installer copying its own N bundled files to
-# ~/.claude/skills/<name>/) emits one HIGH finding per file. Found on a real skill
-# during the launch scan: 3388 near-identical findings inflated the score to
-# 23719 — nonsensically above any genuine hidden_executable/exfil finding — while
-# also making the report unreadable.
-DIRECTORY_GROUP_THRESHOLD = 3
+# Below this many near-identical findings (same directory for file opens, same
+# method+host+path for network requests), list each individually — still useful
+# detail. At or above it, collapse into one finding — otherwise a bulk/retry
+# operation (a self-installer copying its own N bundled files to ~/.claude/
+# skills/<name>/; pip retrying the same blocked URL after the sandbox's network
+# sinkhole) emits one finding per event. Found on real skills during the launch
+# scan: 3388 near-identical file-access findings inflated one score to 23719 —
+# nonsensically above any genuine hidden_executable/exfil finding — while also
+# making the report unreadable.
+NEAR_DUPLICATE_THRESHOLD = 3
 
 OPENAT_PATH_RE = re.compile(r'^AT_FDCWD,\s*"([^"]*)"')
 
@@ -86,21 +88,41 @@ def sandbox_result_findings(result: SandboxRunResult) -> list[Finding]:
             )
         )
 
+    by_request: dict[tuple, list] = {}
     for flow in result.http_flows:
         if flow.kind != "http_request":
             continue
-        looks_secret = _body_looks_like_secret(flow.body_base64)
-        findings.append(
-            Finding(
-                category="network_request",
-                severity=Severity.CRITICAL if looks_secret else Severity.HIGH,
-                summary=f"{flow.method} https://{flow.host}{flow.path}"
-                + (" (request body looks like it may contain a secret)" if looks_secret else ""),
-                detail=f"headers={flow.headers}",
-                source=source,
-                extra={"host": flow.host, "path": flow.path, "body_base64": flow.body_base64},
+        by_request.setdefault((flow.method, flow.host, flow.path), []).append(flow)
+
+    for (method, host, path), flows in by_request.items():
+        looks_secret = any(_body_looks_like_secret(f.body_base64) for f in flows)
+        secret_suffix = " (request body looks like it may contain a secret)" if looks_secret else ""
+        if len(flows) < NEAR_DUPLICATE_THRESHOLD:
+            for flow in flows:
+                flow_looks_secret = _body_looks_like_secret(flow.body_base64)
+                findings.append(
+                    Finding(
+                        category="network_request",
+                        severity=Severity.CRITICAL if flow_looks_secret else Severity.HIGH,
+                        summary=f"{flow.method} https://{flow.host}{flow.path}"
+                        + (" (request body looks like it may contain a secret)" if flow_looks_secret else ""),
+                        detail=f"headers={flow.headers}",
+                        source=source,
+                        extra={"host": flow.host, "path": flow.path, "body_base64": flow.body_base64},
+                    )
+                )
+        else:
+            findings.append(
+                Finding(
+                    category="network_request",
+                    severity=Severity.CRITICAL if looks_secret else Severity.HIGH,
+                    summary=f"{method} https://{host}{path} ({len(flows)}x — likely retried after "
+                    f"the sandbox's network sinkhole){secret_suffix}",
+                    detail=f"headers={flows[0].headers}",
+                    source=source,
+                    extra={"host": host, "path": path, "body_base64": flows[0].body_base64},
+                )
             )
-        )
 
     for flow in result.http_flows:
         if flow.kind == "tls_handshake_failed":
@@ -119,7 +141,7 @@ def sandbox_result_findings(result: SandboxRunResult) -> list[Finding]:
         by_directory.setdefault(directory, []).append(event)
 
     for directory, group in by_directory.items():
-        if len(group) < DIRECTORY_GROUP_THRESHOLD:
+        if len(group) < NEAR_DUPLICATE_THRESHOLD:
             for event in group:
                 findings.append(
                     Finding(

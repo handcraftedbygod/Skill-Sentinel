@@ -1,7 +1,7 @@
 """Regression coverage for sentinel.report's scoring/grouping behavior."""
 
 from sentinel.report import sandbox_result_findings
-from sentinel.sandbox import SandboxRunResult, StraceEvent
+from sentinel.sandbox import HttpFlow, SandboxRunResult, StraceEvent
 
 
 def _openat_event(path: str) -> StraceEvent:
@@ -36,6 +36,31 @@ def test_many_opens_under_one_directory_collapse_to_one_finding():
     file_findings = [f for f in findings if f.category == "out_of_scope_file_access"]
     assert len(file_findings) == 1
     assert "10 files" in file_findings[0].summary
+
+
+def test_repeated_identical_network_requests_collapse_to_one_finding():
+    # Regression test: pip retrying the same blocked URL after the sandbox's
+    # network sinkhole emitted one HIGH network_request finding per retry — found
+    # contributing 42 of 77 points on a real skill (alanl1234/
+    # xiaohongshu-matrices-cli) during the launch scan for a single install
+    # attempt, not 6 distinct destinations.
+    flows = [
+        HttpFlow(kind="http_request", host="pypi.org", port=443, method="GET", path="/simple/foo/")
+        for _ in range(6)
+    ]
+    result = SandboxRunResult(
+        invocation="sh scripts/install.sh",
+        exit_code=0,
+        timed_out=False,
+        strace_events=[],
+        dns_queries=[],
+        http_flows=flows,
+    )
+
+    findings = sandbox_result_findings(result)
+    net_findings = [f for f in findings if f.category == "network_request"]
+    assert len(net_findings) == 1
+    assert "6x" in net_findings[0].summary
 
 
 def test_a_couple_of_scattered_opens_stay_individual():

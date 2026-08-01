@@ -43,6 +43,15 @@ BENIGN_OPEN_PREFIXES = (
     # opened by a standard CI utility (free_disk_space.sh, common in GitHub
     # Actions workflows to reclaim runner disk space) during the launch scan.
     "/var/lib/dpkg/",
+    # Standard OS/distro-family detection files — read by essentially any
+    # install.sh picking a package manager. Found recurring independently across
+    # 2 repos (MobiusQuant/OpenMobius-skill, alanl1234/xiaohongshu-matrices-cli)
+    # during the launch scan; siblings included preemptively for the same reason.
+    "/etc/os-release",
+    "/etc/debian_version",
+    "/etc/lsb-release",
+    "/etc/redhat-release",
+    "/etc/alpine-release",
 )
 
 
