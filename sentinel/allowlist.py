@@ -29,6 +29,12 @@ BENIGN_OPEN_PREFIXES = (
     "/etc/gai.conf",
     "/etc/protocols",
     "/etc/services",
+    # Legacy AIX-style NSS ordering config files that glibc/Node's resolver
+    # probes (always together, always ENOENT on Linux) as part of standard
+    # getaddrinfo() — found on every Node script that makes a network call,
+    # across unrelated skills/authors, during the launch scan.
+    "/etc/netsvc.conf",
+    "/etc/svc.conf",
     # The sandbox's own mitmproxy CA — Node is deliberately pointed at this via
     # NODE_EXTRA_CA_CERTS (see docker/Dockerfile) so TLS interception works.
     # Reading it is our own infrastructure, not the skill doing anything notable.
