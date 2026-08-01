@@ -39,6 +39,7 @@ STATIC_FINDING_CATEGORIES = (
     "hidden_executable",
     "skill_md_exfil_instruction",
     "skill_md_remote_exec_instruction",
+    "skill_md_decode_exec_instruction",
 )
 
 # Below this many near-identical findings (same directory for file opens, same

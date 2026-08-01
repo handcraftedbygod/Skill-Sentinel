@@ -355,16 +355,46 @@ REMOTE_EXEC_PIPE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The SkillCloak paper's core threat model (arXiv:2607.02357) — a self-decoding
+# payload — reframed as a prose instruction instead of bundled code: "decode
+# this blob and pipe it into a shell" needs no network access at scan time to
+# look inert, unlike the curl/wget patterns above, so it's a distinct
+# detection target even though the underlying idea (decode-then-execute) is
+# the same one _scan_python_eval_exec_decode/_scan_js_eval_decode already
+# catch in actual source files. CRITICAL, not MEDIUM: unlike "curl | sh",
+# "base64 -d | sh" has no comparably common legitimate documentation idiom —
+# nothing here is a standard install instruction.
+DECODE_EXEC_PIPE_RE = re.compile(
+    r"\b(?:base64\s+(?:-d|--decode)\b|xxd\s+-r\b|openssl\s+(?:base64|enc)\s+-d\b)"
+    r"[^\n|]*\|\s*(?:sudo\s+)?(bash|sh|zsh|pwsh|powershell)\b",
+    re.IGNORECASE,
+)
+
 PROSE_INSTRUCTION_EXTENSIONS = {".md", ".txt"}
 
 
 def scan_text_for_prose_instructions(text: str, source: str) -> list[Finding]:
     """Flag inline shell commands in prose (SKILL.md or a referenced .md/.txt
-    file) — not a bundled script — that either pipe a remote download straight
-    into a shell/interpreter, or gather system-identifying info via command
-    substitution and send it outbound, on the same line."""
+    file) — not a bundled script — that decode a blob into a shell, pipe a
+    remote download straight into a shell/interpreter, or gather
+    system-identifying info (via command substitution or a crafted hostname)
+    and send it outbound, on the same line."""
     findings: list[Finding] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
+        if DECODE_EXEC_PIPE_RE.search(line):
+            findings.append(
+                Finding(
+                    category="skill_md_decode_exec_instruction",
+                    severity=Severity.CRITICAL,
+                    summary="Prose instructions tell the agent to decode a blob and pipe it "
+                    "straight into a shell/interpreter — a plain-text, self-decoding payload "
+                    "instruction, the same SkillCloak-style obfuscation as a bundled "
+                    "eval(decode(...)) script, just phrased as text instead of code",
+                    detail=f"line {line_no}: {line.strip()[:200]}",
+                    source=source,
+                )
+            )
+            continue
         if REMOTE_EXEC_PIPE_RE.search(line):
             findings.append(
                 Finding(
