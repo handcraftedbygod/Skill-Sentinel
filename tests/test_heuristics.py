@@ -98,6 +98,22 @@ def test_amino_acid_sequences_are_not_flagged_as_base64(tmp_path):
     assert len(findings) == 1
 
 
+def test_vcr_cassette_base64_is_not_flagged(tmp_path):
+    # Regression test: VCR.py/vcrpy-style recorded HTTP test fixtures store
+    # (often protobuf/gzip) response bodies as base64 in committed YAML — found
+    # producing 52 near-identical MEDIUM findings across one skill's test suite
+    # during the launch scan. A blob outside a cassettes/ dir must still flag.
+    cassette_dir = tmp_path / "tests" / "cassettes"
+    cassette_dir.mkdir(parents=True)
+    (cassette_dir / "example.yaml").write_text(f"body: {REALISTIC_BASE64_BLOB}\n", encoding="utf-8")
+    assert scan_file_for_base64_blobs(cassette_dir / "example.yaml") == []
+
+    other_path = tmp_path / "scripts" / "payload.py"
+    other_path.parent.mkdir(parents=True)
+    other_path.write_text(f"_payload = '{REALISTIC_BASE64_BLOB}'\n", encoding="utf-8")
+    assert len(scan_file_for_base64_blobs(other_path)) == 1
+
+
 def test_dev_tooling_hidden_executables_are_downgraded_not_suppressed(tmp_path):
     # Regression test: real (not .sample) hook/CI scripts under conventional
     # maintainer-tooling directories (.github/, .githooks/, .claude/hooks/) were

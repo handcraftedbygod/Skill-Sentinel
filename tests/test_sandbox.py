@@ -84,14 +84,16 @@ def test_strace_notable_openat_events_resolves_relative_paths():
     assert any("etc/shadow" in p for p in notable_paths)
 
 
-def test_strace_notable_openat_events_excludes_node_package_json_probe():
+def test_strace_notable_openat_events_excludes_package_boundary_probes():
     # Regression test: any `node` invocation walks every ancestor dir above cwd
-    # looking for the nearest package.json (module-boundary detection). Since
-    # WORKDIR is /skill, that walk always ends in a failed (ENOENT) lookup of
-    # the container's own /package.json — found flagging real repos HIGH during
-    # the launch-scan pilot for behavior common to every Node-based skill, not
-    # anything the skill itself did. A *present* package.json outside /skill
-    # (not ENOENT) is a different, still-notable situation and must stay flagged.
+    # looking for the nearest package.json (module-boundary detection); Python
+    # packaging tools do the same for pyproject.toml (found independently on
+    # hanyanphysics/AI-for-Physics's open-notebook sub-skill). Since WORKDIR is
+    # /skill, that walk always ends in a failed (ENOENT) lookup of the
+    # container's own root-level file — found flagging real repos HIGH for
+    # behavior common to every node/python-based skill, not anything the skill
+    # itself did. A *present* file outside /skill (not ENOENT) is a different,
+    # still-notable situation and must stay flagged.
     events = [
         StraceEvent(
             pid="1",
@@ -103,6 +105,13 @@ def test_strace_notable_openat_events_excludes_node_package_json_probe():
         StraceEvent(
             pid="1",
             timestamp="00:00:00.000001",
+            syscall="openat",
+            raw_args='AT_FDCWD, "/pyproject.toml", O_RDONLY',
+            result='-1 ENOENT (No such file or directory)',
+        ),
+        StraceEvent(
+            pid="1",
+            timestamp="00:00:00.000002",
             syscall="openat",
             raw_args='AT_FDCWD, "/package.json", O_RDONLY',
             result="3",

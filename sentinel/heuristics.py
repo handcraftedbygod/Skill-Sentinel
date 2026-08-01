@@ -98,6 +98,17 @@ def scan_file_for_base64_blobs(path: Path, min_length: int = 200) -> list[Findin
     if path.suffix not in TEXT_EXTENSIONS:
         return []
 
+    # A "cassettes" directory is the well-known VCR.py/vcrpy/pytest-recording
+    # convention for recorded HTTP test fixtures — response bodies (often
+    # protobuf/gzip) get base64-encoded into committed YAML, never executed.
+    # Found producing 52 near-identical MEDIUM findings across a single skill's
+    # test suite (teng-lin/notebooklm-py) during the launch scan. Narrow by
+    # design (unlike a generic tests/ or fixtures/ exclusion): "cassettes" is a
+    # distinctive, purpose-specific library convention, not a name an attacker
+    # would need to use for a real hiding spot.
+    if "cassettes" in (part.lower() for part in path.parts):
+        return []
+
     try:
         data = path.read_bytes()
     except OSError:

@@ -272,16 +272,21 @@ def strace_execve_events(events: list[StraceEvent]) -> list[StraceEvent]:
     return [e for e in events if e.syscall == "execve"]
 
 
-def _is_node_package_json_probe(path: str, result: str) -> bool:
+PACKAGE_BOUNDARY_FILES = {"/package.json", "/pyproject.toml"}
+
+
+def _is_package_boundary_probe(path: str, result: str) -> bool:
     """Node's module resolver walks every ancestor directory above cwd looking for
-    the nearest package.json (package-boundary / ESM "type" detection) — this
-    fires on essentially any `node` invocation, not something the skill did.
-    WORKDIR is always /skill, so the only such probe landing outside /skill is
-    the root-level lookup, and it's always ENOENT (the sandbox image ships no
-    /package.json). Only the failed probe is allowlisted — a real, present
-    package.json outside /skill would still be notable.
+    the nearest package.json (package-boundary / ESM "type" detection); Python's
+    packaging tools (setuptools/poetry/uv/tomllib-based project-root detection)
+    do the same for pyproject.toml. Both fire on essentially any node/python
+    invocation, not something the skill did. WORKDIR is always /skill, so the
+    only such probe landing outside /skill is the root-level lookup, and it's
+    always ENOENT (the sandbox image ships neither file at /). Only the failed
+    probe is allowlisted — a real, present file outside /skill would still be
+    notable. Found independently for both files during the launch scan.
     """
-    return path == "/package.json" and "ENOENT" in result
+    return path in PACKAGE_BOUNDARY_FILES and "ENOENT" in result
 
 
 def strace_notable_openat_events(events: list[StraceEvent]) -> list[StraceEvent]:
@@ -302,7 +307,7 @@ def strace_notable_openat_events(events: list[StraceEvent]) -> list[StraceEvent]
             raw_path = posixpath.normpath(posixpath.join("/skill", raw_path))
         if is_benign_path(raw_path):
             continue
-        if _is_node_package_json_probe(raw_path, e.result):
+        if _is_package_boundary_probe(raw_path, e.result):
             continue
         notable.append(e)
     return notable
