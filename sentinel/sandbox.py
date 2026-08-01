@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -52,7 +54,9 @@ def ensure_docker_available() -> None:
             "requires Docker — install it from https://docs.docker.com/get-docker/ "
             "and make sure `docker` is on your PATH."
         )
-    result = subprocess.run(["docker", "info"], capture_output=True, text=True)
+    result = subprocess.run(
+        ["docker", "info"], capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
     if result.returncode != 0:
         raise DockerUnavailableError(
             "Docker is installed but the daemon isn't reachable (`docker info` failed). "
@@ -82,7 +86,9 @@ def build_sandbox_image(docker_dir: Path = DOCKER_DIR, tag: str = IMAGE_TAG) -> 
         return tagged
 
     cmd = ["docker", "build", "-t", tagged, str(docker_dir)]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
     if result.returncode != 0:
         raise SentinelError(f"Failed to build the sandbox image:\n{result.stderr}")
     return tagged
@@ -97,6 +103,8 @@ def resolve_skill_source(path_or_url: str, workdir: Path) -> Path:
             ["git", "clone", "--depth", "1", path_or_url, str(dest)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode != 0:
             raise SentinelError(f"Failed to clone {path_or_url}:\n{result.stderr}")
@@ -268,7 +276,19 @@ def strace_notable_openat_events(events: list[StraceEvent]) -> list[StraceEvent]
     notable = []
     for e in events:
         path_match = re.match(r'^AT_FDCWD,\s*"([^"]*)"', e.raw_args)
-        if path_match and not is_benign_path(path_match.group(1)):
+        if not path_match:
+            continue
+        raw_path = path_match.group(1)
+        if not raw_path.startswith("/"):
+            # AT_FDCWD-relative: the traced process's cwd is always /skill (the
+            # container's WORKDIR), so resolve against that before judging scope.
+            # Without this, a plain in-skill read like "sample.txt" gets flagged
+            # as "outside the skill's own directory" purely because the literal
+            # string doesn't start with /skill/ — a false positive on the tool's
+            # own "should scan clean" example. A path that escapes via ../.. still
+            # normalizes outside /skill and is correctly flagged (path traversal).
+            raw_path = posixpath.normpath(posixpath.join("/skill", raw_path))
+        if not is_benign_path(raw_path):
             notable.append(e)
     return notable
 
@@ -373,7 +393,12 @@ def _run_one_candidate(
 ) -> SandboxRunResult:
     container_name = f"sentinel-run-{uuid.uuid4().hex[:12]}"
     skill_dir = skill_dir.resolve()
-    scratch_dir = Path(f"/tmp/sentinel-scratch-{uuid.uuid4().hex[:12]}")
+    # tempfile.gettempdir(), not a hardcoded "/tmp/...": an unresolved driveless
+    # Path("/tmp/...") stringifies without a drive letter on Windows (e.g.
+    # "\tmp\foo"), which Docker Desktop can't bind-mount — the container ends up
+    # writing its logs nowhere the host can see, and every run looks silently
+    # clean instead of erroring.
+    scratch_dir = Path(tempfile.gettempdir()) / f"sentinel-scratch-{uuid.uuid4().hex[:12]}"
     scratch_dir.mkdir(parents=True, exist_ok=True)
 
     docker_cmd = [
@@ -407,7 +432,12 @@ def _run_one_candidate(
     exit_code: int | None = None
     try:
         result = subprocess.run(
-            docker_cmd, capture_output=True, text=True, timeout=timeout_s
+            docker_cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_s,
         )
         exit_code = result.returncode
     except subprocess.TimeoutExpired:
@@ -419,6 +449,8 @@ def _run_one_candidate(
     strace_events = parse_strace_log(scratch_dir / "strace.log")
     dns_queries = parse_dnsmasq_log(scratch_dir / "dnsmasq.log")
     http_flows = parse_mitm_log(scratch_dir / "mitm.log")
+
+    shutil.rmtree(scratch_dir, ignore_errors=True)
 
     return SandboxRunResult(
         invocation=candidate,

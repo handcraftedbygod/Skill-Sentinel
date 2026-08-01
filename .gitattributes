@@ -1,0 +1,5 @@
+# Force LF everywhere, regardless of core.autocrlf on the cloning machine.
+# Without this, Windows checkouts with the common core.autocrlf=true default
+# corrupt shebang lines (e.g. docker/entrypoint.sh's #!/bin/bash becomes
+# #!/bin/bash\r), silently breaking exec inside Linux containers.
+* text=auto eol=lf

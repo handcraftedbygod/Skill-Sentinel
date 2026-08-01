@@ -51,6 +51,22 @@ def sandbox_result_findings(result: SandboxRunResult) -> list[Finding]:
                 source=source,
             )
         )
+    elif not result.strace_events:
+        # Zero events at all (not even the traced process's own execve) almost
+        # always means the trace never actually captured anything — a broken
+        # mount, a container that failed to start, etc. — not a skill that
+        # legitimately did nothing. Surfacing this distinctly matters: without
+        # it, a broken sandbox and a genuinely clean run render identically.
+        findings.append(
+            Finding(
+                category="sandbox_no_trace_data",
+                severity=Severity.HIGH,
+                summary=f"`{result.invocation}` produced no trace data at all — the sandbox "
+                "likely failed to run rather than the skill being clean; treat this result as "
+                "inconclusive, not as a clean bill of health",
+                source=source,
+            )
+        )
 
     for flow in result.http_flows:
         if flow.kind != "http_request":
@@ -189,7 +205,9 @@ def render_markdown(report: Report) -> str:
         lines.append("- No network activity observed.")
     lines.append("")
 
-    subprocess_findings = [f for f in report.findings if f.category == "sandbox_timeout"]
+    subprocess_findings = [
+        f for f in report.findings if f.category in ("sandbox_timeout", "sandbox_no_trace_data")
+    ]
     lines.append("## Subprocess / execution")
     if subprocess_findings:
         for f in subprocess_findings:

@@ -8,6 +8,7 @@ per SPEC.md's verification section, since they need a real Docker daemon.
 from pathlib import Path
 
 from sentinel.sandbox import (
+    StraceEvent,
     parse_dnsmasq_log,
     parse_mitm_log,
     parse_strace_log,
@@ -54,6 +55,33 @@ def test_strace_notable_openat_events_excludes_allowlisted():
     notable_paths = [e.raw_args for e in notable]
     assert any("id_rsa" in p for p in notable_paths)
     assert not any("/usr/lib/python3.12" in p for p in notable_paths)
+
+
+def _openat_event(raw_path: str) -> StraceEvent:
+    return StraceEvent(
+        pid="1",
+        timestamp="00:00:00.000000",
+        syscall="openat",
+        raw_args=f'AT_FDCWD, "{raw_path}", O_RDONLY|O_CLOEXEC',
+        result="3",
+    )
+
+
+def test_strace_notable_openat_events_resolves_relative_paths():
+    # Regression test: cwd is always /skill (the container's WORKDIR), so a
+    # plain relative read like "sample.txt" is genuinely inside the skill's own
+    # directory and must NOT be flagged as "outside" it — that was a real false
+    # positive on the tool's own benign-skill example. A relative path that
+    # escapes via ../.. still resolves outside /skill and must still be flagged.
+    events = [
+        _openat_event("sample.txt"),
+        _openat_event("data/notes.txt"),
+        _openat_event("../../etc/shadow"),
+    ]
+    notable_paths = [e.raw_args for e in strace_notable_openat_events(events)]
+    assert not any("sample.txt" in p for p in notable_paths)
+    assert not any("notes.txt" in p for p in notable_paths)
+    assert any("etc/shadow" in p for p in notable_paths)
 
 
 def test_parse_dnsmasq_log():

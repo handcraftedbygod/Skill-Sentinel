@@ -22,6 +22,7 @@ ARG HTTPS_PROXY
 ARG NO_PROXY
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash \
         strace \
         ca-certificates \
         iptables \

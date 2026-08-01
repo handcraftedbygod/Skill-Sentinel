@@ -17,6 +17,18 @@ BENIGN_OPEN_PREFIXES = (
     "/root/.cache/",
     "/usr/local/lib/python",
     "/usr/lib/python",
+    # glibc NSS/resolver files opened by essentially any program that does a
+    # hostname lookup, DNS resolution, or user/group lookup (getaddrinfo(),
+    # id, etc.) — flagging these as notable would light up "HIGH" on nearly
+    # every skill that makes a single network call, drowning real findings.
+    "/etc/passwd",
+    "/etc/group",
+    "/etc/hosts",
+    "/etc/host.conf",
+    "/etc/resolv.conf",
+    "/etc/gai.conf",
+    "/etc/protocols",
+    "/etc/services",
 )
 
 

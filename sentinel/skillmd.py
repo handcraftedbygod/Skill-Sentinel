@@ -110,7 +110,11 @@ def discover_bundled_files(skill_dir: Path) -> list[BundledFile]:
             continue
         if path.name == "SKILL.md" and path.parent == skill_dir:
             continue
-        relative_path = str(path.relative_to(skill_dir))
+        # .as_posix(), not str(): these paths get shell-quoted and run inside a
+        # Linux container. A bare str() gives backslash separators on Windows
+        # hosts (e.g. "scripts\\format.py"), which isn't a valid path on Linux —
+        # the candidate silently fails to open the real file instead of testing it.
+        relative_path = path.relative_to(skill_dir).as_posix()
         if any(part.startswith(".") for part in Path(relative_path).parts):
             continue
         is_executable = bool(path.stat().st_mode & 0o111)
