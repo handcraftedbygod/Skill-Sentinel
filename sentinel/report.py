@@ -291,7 +291,7 @@ def render_markdown(report: Report) -> str:
     static_findings = [
         f
         for f in report.findings
-        if f.category in ("base64_blob", "eval_exec_decode", "hidden_executable")
+        if f.category in ("base64_blob", "eval_exec_decode", "hidden_executable", "skill_md_exfil_instruction")
     ]
     lines.append("## Static red flags")
     if static_findings:
@@ -409,7 +409,7 @@ def _report_body_html(report: Report) -> str:
     subprocess_findings = [f for f in report.findings if f.category in ("sandbox_timeout", "sandbox_no_trace_data")]
     file_findings = [f for f in report.findings if f.category == "out_of_scope_file_access"]
     static_findings = [
-        f for f in report.findings if f.category in ("base64_blob", "eval_exec_decode", "hidden_executable")
+        f for f in report.findings if f.category in ("base64_blob", "eval_exec_decode", "hidden_executable", "skill_md_exfil_instruction")
     ]
     semantic_findings = [f for f in report.findings if f.category == "semantic_review"]
     other_findings = [

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from sentinel.skillmd import discover_skill_directories, extract_usage_examples
+from sentinel.skillmd import discover_skill_directories, extract_usage_examples, parse_skill_md
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
@@ -35,6 +35,52 @@ def test_skill_md_under_a_hidden_directory_is_not_a_real_skill(tmp_path):
     (hidden / "SKILL.md").write_text("---\nname: mirrored\n---\n", encoding="utf-8")
 
     assert discover_skill_directories(tmp_path) == [tmp_path]
+
+
+def test_skill_in_known_agent_tool_install_dir_is_found(tmp_path):
+    # Regression test: found via snyk-labs/toxicskills-goof (a third-party
+    # security research sample) — every skill in that repo, including the
+    # actual malicious demo, lives under .agents/skills/ or .gemini/skills/,
+    # standard install locations for those tools. The original blanket
+    # "skip all dot-dirs" rule made the whole repo invisible except one
+    # skill sitting outside any dot-dir. .git/ and unknown hidden dirs must
+    # still be excluded.
+    for tool_dir in (".claude", ".agents", ".gemini", ".cursor", ".codex", ".openclaw"):
+        skill_dir = tmp_path / tool_dir / "skills" / "vercel"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("---\nname: vercel\n---\n", encoding="utf-8")
+
+    git_dir = tmp_path / ".git" / "skills" / "payload"
+    git_dir.mkdir(parents=True)
+    (git_dir / "SKILL.md").write_text("---\nname: hidden-payload\n---\n", encoding="utf-8")
+
+    unknown_dir = tmp_path / ".some-other-tool" / "skills" / "foo"
+    unknown_dir.mkdir(parents=True)
+    (unknown_dir / "SKILL.md").write_text("---\nname: unknown-tool\n---\n", encoding="utf-8")
+
+    found = discover_skill_directories(tmp_path)
+    found_names = {p.relative_to(tmp_path).as_posix() for p in found}
+    assert found_names == {
+        ".claude/skills/vercel",
+        ".agents/skills/vercel",
+        ".gemini/skills/vercel",
+        ".cursor/skills/vercel",
+        ".codex/skills/vercel",
+        ".openclaw/skills/vercel",
+    }
+
+
+def test_lowercase_skill_md_is_found_and_parsed(tmp_path):
+    # Regression test: a real skill in snyk-labs/toxicskills-goof uses
+    # "skill.md" (lowercase) — plausibly specifically to evade tools that
+    # hardcode the exact-case "SKILL.md" filename.
+    skill_dir = tmp_path / "clawhub"
+    skill_dir.mkdir()
+    (skill_dir / "skill.md").write_text("---\nname: clawhub\n---\nbody text\n", encoding="utf-8")
+
+    assert discover_skill_directories(tmp_path) == [skill_dir]
+    metadata = parse_skill_md(skill_dir)
+    assert metadata.name == "clawhub"
 
 
 def test_extract_usage_examples_skips_doc_placeholders():

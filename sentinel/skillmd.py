@@ -29,6 +29,19 @@ SHELL_PROMPT_RE = re.compile(r"^\s*\$\s+(.+)$", re.MULTILINE)
 PLACEHOLDER_TOKEN_RE = re.compile(r"<[A-Za-z_][\w-]*>|__[A-Z][A-Z0-9_]*__|(?<!\$)\{[A-Za-z_]\w*\}")
 
 
+# Dot-directories that are *conventional install locations* for real,
+# independently-installable skills across various agent tools (Claude Code,
+# other agent CLIs, Gemini, Cursor, Codex, OpenClaw), as opposed to VCS
+# internals / CI mirrors / build output. Found via snyk-labs/toxicskills-goof
+# (a third-party security research sample): every skill in that repo —
+# including the actual malicious demo — lives under .agents/skills/ or
+# .gemini/skills/, both blanket-excluded by the original "skip all dot-dirs"
+# rule. That rule was right for .git/, .github/, .codex-marketplace/ (VCS/CI/
+# mirror content) and wrong for these — a real, evidence-based correction, not
+# a broadening for its own sake.
+KNOWN_SKILL_INSTALL_DIRS = {".claude", ".agents", ".gemini", ".cursor", ".codex", ".openclaw", ".clawhub"}
+
+
 class SkillMdNotFoundError(Exception):
     """Raised when a candidate skill directory has no SKILL.md."""
 
@@ -55,10 +68,23 @@ class SkillMetadata:
     path: Path
 
 
+def find_skill_md_file(skill_dir: Path) -> Path | None:
+    """Case-insensitive lookup — found "skill.md" (lowercase) used in the wild
+    by a real skill in snyk-labs/toxicskills-goof, plausibly specifically to
+    evade tools that hardcode the exact-case "SKILL.md" filename."""
+    if not skill_dir.is_dir():
+        return None
+    for entry in skill_dir.iterdir():
+        if entry.is_file() and entry.name.lower() == "skill.md":
+            return entry
+    return None
+
+
 def parse_skill_md(skill_dir: Path) -> SkillMetadata:
-    """Read and parse <skill_dir>/SKILL.md's YAML frontmatter and body."""
-    skill_md_path = skill_dir / "SKILL.md"
-    if not skill_md_path.is_file():
+    """Read and parse <skill_dir>/SKILL.md's (case-insensitive) YAML frontmatter
+    and body."""
+    skill_md_path = find_skill_md_file(skill_dir)
+    if skill_md_path is None:
         raise SkillMdNotFoundError(skill_dir)
 
     text = skill_md_path.read_text(encoding="utf-8", errors="replace")
@@ -101,10 +127,10 @@ def parse_skill_md(skill_dir: Path) -> SkillMetadata:
 
 
 def discover_skill_directories(root: Path) -> list[Path]:
-    """Find every directory under root that directly contains a SKILL.md,
-    skipping hidden/dot directories (VCS internals, CI mirrors, build output —
-    the same surface heuristics.scan_for_hidden_executable_content() treats as
-    "not the skill's normal, visible inventory").
+    """Find every directory under root that directly contains a SKILL.md
+    (case-insensitive), skipping hidden/dot directories — except the known
+    agent-tool skill-install conventions (KNOWN_SKILL_INSTALL_DIRS), which are
+    real installed-skill locations, not VCS/CI/build-artifact noise.
 
     Most repos are a single skill (SKILL.md at root, returned as a 1-item list).
     Some are collections — one repo bundling many skills, each in its own
@@ -113,8 +139,8 @@ def discover_skill_directories(root: Path) -> list[Path]:
     """
     found = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-        if "SKILL.md" in filenames:
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") or d in KNOWN_SKILL_INSTALL_DIRS]
+        if any(f.lower() == "skill.md" for f in filenames):
             found.append(Path(dirpath))
     return sorted(found)
 
