@@ -56,6 +56,10 @@ BENIGN_OPEN_PREFIXES = (
     # config path on import — a standard pip-wheel artifact for a very common
     # dependency (pulled in by requests/urllib3/paramiko/etc.), not skill-authored.
     "/opt/pyca/cryptography/",
+    # curl's own standard config-file lookup, checked on every invocation
+    # regardless of target — not something the skill's request logic does.
+    "/root/.curlrc",
+    "/root/.config/curlrc",
 )
 
 
