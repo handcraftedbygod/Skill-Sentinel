@@ -20,6 +20,23 @@ BASE64_BLOB_RE = re.compile(rb"[A-Za-z0-9+/]{%d,}={0,2}" % 200)
 # custom-logo badges all embed an SVG this way).
 DATA_URI_PREFIX_RE = re.compile(rb"data:[\w.+-]+/[\w.%+-]+;base64,$")
 
+DIGIT_RE = re.compile(rb"[0-9]")
+LOWERCASE_RE = re.compile(rb"[a-z]")
+
+
+def _looks_like_real_base64(blob: bytes) -> bool:
+    """Real base64-encoded binary/text draws roughly uniformly from all 64
+    symbols, so a 200+ char run has virtually no chance of containing zero
+    digits or zero lowercase letters. Plain-text data that happens to satisfy
+    the base64 charset — most notably amino-acid sequences (the 20-letter
+    protein alphabet is a subset of base64's, all-uppercase, no digits) — does
+    not. Found flagging the canonical GFP sequence
+    ("MSKGEELFTGVVPILVELDGDVNG...", ubiquitous in bioinformatics
+    tutorials/examples) identically to an actual payload across 3 independent
+    skills in a 158-skill scientific-skills scan.
+    """
+    return bool(DIGIT_RE.search(blob)) and bool(LOWERCASE_RE.search(blob))
+
 DECODE_CALL_NAMES = {
     "b64decode",
     "b64decode".upper(),
@@ -91,6 +108,7 @@ def scan_file_for_base64_blobs(path: Path, min_length: int = 200) -> list[Findin
         match.group(0)
         for match in pattern.finditer(data)
         if not DATA_URI_PREFIX_RE.search(data[max(0, match.start() - 100) : match.start()])
+        and _looks_like_real_base64(match.group(0))
     ]
     if not blobs:
         return []

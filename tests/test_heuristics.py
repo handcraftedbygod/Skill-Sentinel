@@ -13,6 +13,13 @@ from sentinel.heuristics import run_heuristics, scan_file_for_base64_blobs
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
+# Mixed case + digits, like real base64 of arbitrary binary/text — long enough
+# to pass BASE64_BLOB_RE's 200-char minimum and _looks_like_real_base64's
+# digit+lowercase check. Distinct from a plain repeated letter (which the
+# amino-acid-sequence fix now correctly excludes) so tests unrelated to that
+# fix aren't coupled to it.
+REALISTIC_BASE64_BLOB = "aB3" * 70
+
 
 def test_benign_skill_is_clean():
     findings = run_heuristics(EXAMPLES_DIR / "benign-skill")
@@ -40,7 +47,7 @@ def test_many_base64_blobs_in_one_file_collapse_to_one_finding(tmp_path):
     # near-identical MEDIUM findings on one real skill's vendor bundle) during the
     # launch scan. A handful of distinct blobs is still useful to see individually.
     path = tmp_path / "vendor.js"
-    blob = "A" * 200
+    blob = REALISTIC_BASE64_BLOB
     path.write_text("\n".join([blob] * 5), encoding="utf-8")
 
     findings = scan_file_for_base64_blobs(path)
@@ -57,7 +64,7 @@ def test_data_uri_base64_is_not_flagged(tmp_path):
     # data:image/svg+xml;base64,<blob> — found flagged identically to an actual
     # self-decoding payload on 3 independent README.md files during the launch
     # scan. A blob NOT preceded by a data: URI prefix must still be flagged.
-    blob = "A" * 200
+    blob = REALISTIC_BASE64_BLOB
     path = tmp_path / "README.md"
     path.write_text(
         f"![badge](https://img.shields.io/badge/x-y?logo=data:image/svg%2Bxml;base64,{blob})\n"
@@ -67,7 +74,28 @@ def test_data_uri_base64_is_not_flagged(tmp_path):
 
     findings = scan_file_for_base64_blobs(path)
     assert len(findings) == 1
-    assert findings[0].detail.startswith("A" * 60)
+    assert findings[0].detail.startswith(blob[:60])
+
+
+def test_amino_acid_sequences_are_not_flagged_as_base64(tmp_path):
+    # Regression test: the canonical GFP protein sequence (used everywhere in
+    # bioinformatics tutorials/examples) satisfies base64's charset over a long
+    # enough run — found flagged identically to an actual payload across 3
+    # independent skills in a 158-skill scientific-skills aggregator scan. Real
+    # base64 of arbitrary binary/text draws from all 64 symbols; an all-caps,
+    # no-digit run doesn't, and must still be flagged when it IS real base64.
+    gfp_sequence = (
+        "MSKGEELFTGVVPILVELDGDVNGHKFSVSGEGEGDATYGKLTLKFICTTGKLPVPWPTL"
+        "VTTLTYGVQCFARYPEHMKMNDFFKSAMPEGYVQERTIFFKDDGNYKTRAEVKFEGDTLV"
+    )
+    path = tmp_path / "reference.md"
+    path.write_text(f"sequence: {gfp_sequence}\n", encoding="utf-8")
+    assert scan_file_for_base64_blobs(path) == []
+
+    real_path = tmp_path / "payload.py"
+    real_path.write_text(f"_payload = '{REALISTIC_BASE64_BLOB}'\n", encoding="utf-8")
+    findings = scan_file_for_base64_blobs(real_path)
+    assert len(findings) == 1
 
 
 def test_dev_tooling_hidden_executables_are_downgraded_not_suppressed(tmp_path):
