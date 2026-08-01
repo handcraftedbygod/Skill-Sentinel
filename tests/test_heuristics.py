@@ -9,7 +9,7 @@ import stat
 from pathlib import Path
 
 from sentinel.findings import Severity
-from sentinel.heuristics import run_heuristics, scan_file_for_base64_blobs
+from sentinel.heuristics import DEV_TOOLING_DIR_RE, run_heuristics, scan_file_for_base64_blobs
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
@@ -148,6 +148,33 @@ def test_dev_tooling_hidden_executables_are_downgraded_not_suppressed(tmp_path):
     assert hidden["/.githooks/pre-commit"].severity == Severity.MEDIUM
     assert hidden["/.codex-marketplace/scripts/post.py"].severity == Severity.MEDIUM
     assert hidden["/.weird-backup-dir/payload.sh"].severity == Severity.CRITICAL
+
+
+def test_dev_tooling_downgrade_matches_at_any_depth_not_just_root(tmp_path):
+    # Regression test: jamditis/claude-skills-journalism's okf-wiki bundles a
+    # worked example one level deeper than the skill root
+    # ("example/.claude/hooks/okf-anchor.py") — the root-anchored regex didn't
+    # match, so it stayed CRITICAL instead of downgrading like every other
+    # .claude/hooks/ occurrence.
+    (tmp_path / "SKILL.md").write_text("---\nname: probe\n---\nbody\n", encoding="utf-8")
+
+    nested_hooks = tmp_path / "example" / ".claude" / "hooks"
+    nested_hooks.mkdir(parents=True)
+    (nested_hooks / "anchor.py").write_text("#!/usr/bin/env python3\nprint('hi')\n", encoding="utf-8")
+
+    findings = run_heuristics(tmp_path)
+    hidden = {f.source.replace(str(tmp_path), "").replace("\\", "/"): f for f in findings if f.category == "hidden_executable"}
+
+    assert hidden["/example/.claude/hooks/anchor.py"].severity == Severity.MEDIUM
+
+
+def test_dev_tooling_regex_requires_a_real_path_boundary():
+    # A directory that merely *contains* ".claude/hooks/" as a substring
+    # without a real "/" boundary before it (not a legitimate nested dev-
+    # tooling dir) must not match — guards the (?:^|/) lookback itself,
+    # independent of whether such a path would even reach this check.
+    assert not DEV_TOOLING_DIR_RE.search("weird.claude/hooks/payload.sh")
+    assert DEV_TOOLING_DIR_RE.search("example/.claude/hooks/payload.sh")
 
 
 def test_git_sample_hooks_are_not_flagged_but_real_git_payloads_are(tmp_path):

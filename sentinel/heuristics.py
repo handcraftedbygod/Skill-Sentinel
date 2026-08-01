@@ -76,8 +76,15 @@ GIT_HOOK_SAMPLE_RE = re.compile(r"^\.git/hooks/[^/]+\.sample$")
 # the repo's own scripts/sync_codex_marketplace.py generates it as a byte-for-byte
 # mirror of the already-visible top-level content, for OpenAI Codex's marketplace
 # packaging format.
+# (?:^|/) instead of a bare ^: found not matching when the same dev-tooling
+# dir sits one level deeper than the skill root (jamditis/claude-skills-
+# journalism's okf-wiki: "example/.claude/hooks/okf-anchor.py", a worked
+# example nested under example/). The (?:^|/) lookback still requires a real
+# path-component boundary, so "myexample.claude/hooks/foo.py" (a directory
+# that merely ends in ".claude", not a real .claude dir) correctly does not
+# match — only used with .search(), never .match().
 DEV_TOOLING_DIR_RE = re.compile(
-    r"^(\.github/|\.githooks/|\.gitlab-ci/|\.claude/hooks/|\.husky/|\.codex-marketplace/)"
+    r"(?:^|/)(\.github/|\.githooks/|\.gitlab-ci/|\.claude/hooks/|\.husky/|\.codex-marketplace/)"
 )
 
 # Below this many base64 blobs in one file, list each individually. At or above
@@ -261,7 +268,7 @@ def scan_for_hidden_executable_content(skill_dir: Path) -> list[Finding]:
                     pass
 
             if is_executable or has_shebang:
-                severity = Severity.MEDIUM if DEV_TOOLING_DIR_RE.match(relative_path) else Severity.CRITICAL
+                severity = Severity.MEDIUM if DEV_TOOLING_DIR_RE.search(relative_path) else Severity.CRITICAL
                 findings.append(
                     Finding(
                         category="hidden_executable",
