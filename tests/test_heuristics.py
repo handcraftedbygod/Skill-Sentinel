@@ -8,7 +8,7 @@ import stat
 
 from pathlib import Path
 
-from sentinel.heuristics import run_heuristics
+from sentinel.heuristics import run_heuristics, scan_file_for_base64_blobs
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
@@ -31,6 +31,24 @@ def test_malicious_sample_is_flagged():
     assert "hidden_executable" in categories, (
         f"expected a hidden_executable finding for .cache/.helper, got categories: {categories}"
     )
+
+
+def test_many_base64_blobs_in_one_file_collapse_to_one_finding(tmp_path):
+    # Regression test: a minified vendor.js/compiled contract ABI can legitimately
+    # contain dozens of long base64-charset runs — found inflating scores (43
+    # near-identical MEDIUM findings on one real skill's vendor bundle) during the
+    # launch scan. A handful of distinct blobs is still useful to see individually.
+    path = tmp_path / "vendor.js"
+    blob = "A" * 200
+    path.write_text("\n".join([blob] * 5), encoding="utf-8")
+
+    findings = scan_file_for_base64_blobs(path)
+    assert len(findings) == 1
+    assert "5 long base64-looking strings" in findings[0].summary
+
+    few_path = tmp_path / "small.js"
+    few_path.write_text("\n".join([blob] * 2), encoding="utf-8")
+    assert len(scan_file_for_base64_blobs(few_path)) == 2
 
 
 def test_git_sample_hooks_are_not_flagged_but_real_git_payloads_are(tmp_path):

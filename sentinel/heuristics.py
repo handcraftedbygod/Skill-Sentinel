@@ -39,6 +39,10 @@ TEXT_EXTENSIONS = {".py", ".js", ".ts", ".sh", ".rb", ".pl", ".txt", ".md", ".js
 # this one well-known, inert, git-shipped pattern is allowlisted.
 GIT_HOOK_SAMPLE_RE = re.compile(r"^\.git/hooks/[^/]+\.sample$")
 
+# Below this many base64 blobs in one file, list each individually. At or above
+# it, collapse into one finding — see scan_file_for_base64_blobs.
+BASE64_GROUP_THRESHOLD = 3
+
 
 def scan_file_for_base64_blobs(path: Path, min_length: int = 200) -> list[Finding]:
     """Flag long base64-looking runs in source/text files — a hallmark of
@@ -53,16 +57,24 @@ def scan_file_for_base64_blobs(path: Path, min_length: int = 200) -> list[Findin
     if path.suffix not in TEXT_EXTENSIONS:
         return []
 
-    findings: list[Finding] = []
     try:
         data = path.read_bytes()
     except OSError:
-        return findings
+        return []
 
     pattern = BASE64_BLOB_RE if min_length == 200 else re.compile(rb"[A-Za-z0-9+/]{%d,}={0,2}" % min_length)
-    for match in pattern.finditer(data):
-        blob = match.group(0)
-        findings.append(
+    blobs = [match.group(0) for match in pattern.finditer(data)]
+    if not blobs:
+        return []
+
+    # Below this many blobs in one file, list each individually. At or above it,
+    # collapse into one finding — a single minified vendor.js/compiled contract
+    # ABI can legitimately contain dozens of long base64-charset runs, and one
+    # MEDIUM finding per match was found inflating scores/drowning the report on
+    # real skills that bundle build artifacts, same shape as the openat grouping
+    # fix in report.py.
+    if len(blobs) < BASE64_GROUP_THRESHOLD:
+        return [
             Finding(
                 category="base64_blob",
                 severity=Severity.MEDIUM,
@@ -70,8 +82,18 @@ def scan_file_for_base64_blobs(path: Path, min_length: int = 200) -> list[Findin
                 detail=blob[:60].decode("ascii", errors="replace") + "...",
                 source=str(path),
             )
+            for blob in blobs
+        ]
+    return [
+        Finding(
+            category="base64_blob",
+            severity=Severity.MEDIUM,
+            summary=f"{len(blobs)} long base64-looking strings in {path.name} "
+            f"(longest {max(len(b) for b in blobs)} chars)",
+            detail=blobs[0][:60].decode("ascii", errors="replace") + "...",
+            source=str(path),
         )
-    return findings
+    ]
 
 
 def _python_ast_has_decode_call(node: ast.AST) -> bool:

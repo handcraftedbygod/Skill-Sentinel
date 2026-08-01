@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import base64
 import json
+import posixpath
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,6 +29,22 @@ SEVERITY_WEIGHT = {
 }
 
 SECRET_LOOKING_RE_PARTS = ("key", "token", "secret", "password", "credential", "api_key")
+
+# Below this many notable opens under the same directory, list each individually
+# (still useful detail). At or above it, collapse into one finding — otherwise a
+# single bulk operation (e.g. a self-installer copying its own N bundled files to
+# ~/.claude/skills/<name>/) emits one HIGH finding per file. Found on a real skill
+# during the launch scan: 3388 near-identical findings inflated the score to
+# 23719 — nonsensically above any genuine hidden_executable/exfil finding — while
+# also making the report unreadable.
+DIRECTORY_GROUP_THRESHOLD = 3
+
+OPENAT_PATH_RE = re.compile(r'^AT_FDCWD,\s*"([^"]*)"')
+
+
+def _openat_path(raw_args: str) -> str:
+    match = OPENAT_PATH_RE.match(raw_args)
+    return match.group(1) if match else raw_args
 
 
 def _body_looks_like_secret(body_base64: str) -> bool:
@@ -95,15 +113,33 @@ def sandbox_result_findings(result: SandboxRunResult) -> list[Finding]:
                 )
             )
 
+    by_directory: dict[str, list] = {}
     for event in strace_notable_openat_events(result.strace_events):
-        findings.append(
-            Finding(
-                category="out_of_scope_file_access",
-                severity=Severity.HIGH,
-                summary=f"Opened a file outside the skill's own directory: {event.raw_args}",
-                source=source,
+        directory = posixpath.dirname(_openat_path(event.raw_args))
+        by_directory.setdefault(directory, []).append(event)
+
+    for directory, group in by_directory.items():
+        if len(group) < DIRECTORY_GROUP_THRESHOLD:
+            for event in group:
+                findings.append(
+                    Finding(
+                        category="out_of_scope_file_access",
+                        severity=Severity.HIGH,
+                        summary=f"Opened a file outside the skill's own directory: {event.raw_args}",
+                        source=source,
+                    )
+                )
+        else:
+            sample = ", ".join(_openat_path(e.raw_args) for e in group[:3])
+            findings.append(
+                Finding(
+                    category="out_of_scope_file_access",
+                    severity=Severity.HIGH,
+                    summary=f"Opened {len(group)} files outside the skill's own directory, all "
+                    f"under `{directory}/` (e.g. {sample}, ...)",
+                    source=source,
+                )
             )
-        )
 
     observed_hosts = {f.host for f in result.http_flows if f.host}
     raw_connects = strace_connect_events(result.strace_events)
