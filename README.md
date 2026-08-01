@@ -1,4 +1,4 @@
-# Skill Sentinel
+# Skill Sentinel (WORK IN PROGRESS)
 
 **The first practical runtime auditor against SkillCloak-style attacks on Claude Skills.**
 
