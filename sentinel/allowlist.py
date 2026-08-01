@@ -52,6 +52,10 @@ BENIGN_OPEN_PREFIXES = (
     "/etc/lsb-release",
     "/etc/redhat-release",
     "/etc/alpine-release",
+    # The Python `cryptography` package bundles its own OpenSSL and reads this
+    # config path on import — a standard pip-wheel artifact for a very common
+    # dependency (pulled in by requests/urllib3/paramiko/etc.), not skill-authored.
+    "/opt/pyca/cryptography/",
 )
 
 
