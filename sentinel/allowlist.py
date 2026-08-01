@@ -39,6 +39,10 @@ BENIGN_OPEN_PREFIXES = (
     # NODE_EXTRA_CA_CERTS (see docker/Dockerfile) so TLS interception works.
     # Reading it is our own infrastructure, not the skill doing anything notable.
     "/etc/mitmproxy/",
+    # Debian package-manager state, read-only and not attacker-controlled — found
+    # opened by a standard CI utility (free_disk_space.sh, common in GitHub
+    # Actions workflows to reclaim runner disk space) during the launch scan.
+    "/var/lib/dpkg/",
 )
 
 

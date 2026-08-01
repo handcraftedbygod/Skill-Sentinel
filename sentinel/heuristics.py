@@ -39,6 +39,16 @@ TEXT_EXTENSIONS = {".py", ".js", ".ts", ".sh", ".rb", ".pl", ".txt", ".md", ".js
 # this one well-known, inert, git-shipped pattern is allowlisted.
 GIT_HOOK_SAMPLE_RE = re.compile(r"^\.git/hooks/[^/]+\.sample$")
 
+# Well-known maintainer/CI tooling directories. Unlike GIT_HOOK_SAMPLE_RE this is
+# real, custom, attacker-writable content — not suppressed, just downgraded from
+# CRITICAL to MEDIUM (still flagged, still visible; an attacker could still hide
+# here). Found repeated 6x independently across the launch scan, always CI
+# lint/test/commit-hook scripts, never referenced by or invoked as part of
+# running the skill itself: .github/scripts/*.sh (swaponline/MultiCurrencyWallet,
+# marmotdata/marmot x2, dreamwing/clawbridge), .githooks/* (Dicklesworthstone/
+# mcp_agent_mail, wgzhao/Addax x2), .claude/hooks/* (sheeki03/tirith).
+DEV_TOOLING_DIR_RE = re.compile(r"^(\.github/|\.githooks/|\.gitlab-ci/|\.claude/hooks/|\.husky/)")
+
 # Below this many base64 blobs in one file, list each individually. At or above
 # it, collapse into one finding — see scan_file_for_base64_blobs.
 BASE64_GROUP_THRESHOLD = 3
@@ -204,10 +214,11 @@ def scan_for_hidden_executable_content(skill_dir: Path) -> list[Finding]:
                     pass
 
             if is_executable or has_shebang:
+                severity = Severity.MEDIUM if DEV_TOOLING_DIR_RE.match(relative_path) else Severity.CRITICAL
                 findings.append(
                     Finding(
                         category="hidden_executable",
-                        severity=Severity.CRITICAL,
+                        severity=severity,
                         summary=f"Executable content at hidden path {relative_path}, not referenced by SKILL.md",
                         detail="executable bit set" if is_executable else "has shebang",
                         source=str(file_path),

