@@ -138,6 +138,14 @@ def build_invocation_candidates(
     for bundled_file in bundled_files:
         if not bundled_file.is_script:
             continue
+        # A file under a templates/ directory is explicitly signaling "not meant
+        # to run as-is" — found containing a literal, unresolved placeholder URL
+        # (templates/install.sh, punkscience/agent-skills) that produced a
+        # nonsensical network_request finding when run directly. Content-level
+        # placeholder detection (PLACEHOLDER_TOKEN_RE, skillmd.py) only covers
+        # SKILL.md's own usage examples, not arbitrary bundled file contents.
+        if "templates" in Path(bundled_file.relative_path).parts[:-1]:
+            continue
         interpreter = INTERPRETER_BY_SUFFIX.get(bundled_file.path.suffix)
         if interpreter:
             candidates.append(f"{interpreter} {shlex.quote(bundled_file.relative_path)}")

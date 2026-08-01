@@ -17,6 +17,17 @@ USAGE_HEADING_RE = re.compile(r"^#{1,6}\s*(usage|examples?)\b", re.IGNORECASE)
 FENCED_CODE_RE = re.compile(r"```(?:[\w+-]*)\n(.*?)```", re.DOTALL)
 SHELL_PROMPT_RE = re.compile(r"^\s*\$\s+(.+)$", re.MULTILINE)
 
+# Doc-style fill-in-the-blank placeholders (<owner>, __REPO__, {baseDir}) are
+# never valid literal shell/URL syntax — running them as-is either fails
+# immediately (a "sandbox broke" false alarm) or, worse, resolves against the
+# sandbox's own DNS sinkhole and gets logged as a real network_request finding
+# for a URL that was never actually reachable. ${VAR} is deliberately not
+# matched here — real shell env-var expansion, ambiguous whether the author
+# meant it literally. Found independently twice during the launch scan
+# (baoyu-skills' "${BUN_X} {baseDir}/scripts/main.ts", punkscience/agent-skills'
+# "https://__OWNER__.github.io/__REPO__/apt/__KEYRING__").
+PLACEHOLDER_TOKEN_RE = re.compile(r"<[A-Za-z_][\w-]*>|__[A-Z][A-Z0-9_]*__|(?<!\$)\{[A-Za-z_]\w*\}")
+
 
 class SkillMdNotFoundError(Exception):
     """Raised when a candidate skill directory has no SKILL.md."""
@@ -177,7 +188,7 @@ def extract_usage_examples(body: str) -> list[str]:
             prompt_match = SHELL_PROMPT_RE.match(line)
             if prompt_match:
                 line = prompt_match.group(1).strip()
-            if line and not line.startswith("#"):
+            if line and not line.startswith("#") and not PLACEHOLDER_TOKEN_RE.search(line):
                 examples.append(line)
 
     # De-duplicate while preserving order.

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from sentinel.sandbox import (
     StraceEvent,
+    build_invocation_candidates,
     parse_dnsmasq_log,
     parse_mitm_log,
     parse_strace_log,
@@ -16,6 +17,7 @@ from sentinel.sandbox import (
     strace_execve_events,
     strace_notable_openat_events,
 )
+from sentinel.skillmd import BundledFile
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -153,3 +155,24 @@ def test_parse_missing_logs_return_empty():
     assert parse_strace_log(FIXTURES_DIR / "does-not-exist.log") == []
     assert parse_dnsmasq_log(FIXTURES_DIR / "does-not-exist.log") == []
     assert parse_mitm_log(FIXTURES_DIR / "does-not-exist.log") == []
+
+
+def _bundled_script(relative_path: str) -> BundledFile:
+    return BundledFile(
+        path=Path(relative_path), relative_path=relative_path, is_script=True, is_executable=False
+    )
+
+
+def test_build_invocation_candidates_skips_templates_directory():
+    # Regression test: templates/install.sh (punkscience/agent-skills) contains
+    # a literal, unresolved placeholder URL — running it produced a nonsensical
+    # network_request finding when the placeholder hostname resolved against
+    # the sandbox's own DNS sinkhole. A file under templates/ is explicitly
+    # signaling "not meant to run as-is"; a same-named script NOT under
+    # templates/ must still become a candidate.
+    bundled = [
+        _bundled_script("templates/install.sh"),
+        _bundled_script("scripts/real_example.py"),
+    ]
+    candidates = build_invocation_candidates(Path("/skill"), bundled, "", None)
+    assert candidates == ["python3 scripts/real_example.py"]
