@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -18,6 +19,7 @@ from sentinel.sandbox import (
     resolve_skill_source,
     run_skill_in_sandbox,
 )
+from sentinel.semantic_review import SemanticReviewError, review_skill_instructions
 from sentinel.skillmd import (
     SkillMdNotFoundError,
     SkillMdParseError,
@@ -61,11 +63,31 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the Docker sandbox entirely and only run the static heuristics pass",
     )
+    scan.add_argument(
+        "--semantic-review",
+        action="store_true",
+        help="Send each skill's own instructions to Claude for adversarial review "
+        "(prompt-injection-style manipulation of the agent, not visible to file-content "
+        "or behavioral checks). Costs one Anthropic API call per skill; requires "
+        "ANTHROPIC_API_KEY. Opt-in — off by default.",
+    )
 
     return parser
 
 
 def _run_scan(args: argparse.Namespace) -> int:
+    # Checked once, up front — not per skill_dir in the loop below. A missing key
+    # is a one-time configuration problem; printing the same "set ANTHROPIC_API_KEY"
+    # warning once per skill in a multi-hundred-skill collection scan would be noise
+    # a user could easily miss, then wrongly assume --semantic-review actually ran.
+    if args.semantic_review and not os.environ.get("ANTHROPIC_API_KEY"):
+        print(
+            "error: --semantic-review requires ANTHROPIC_API_KEY to be set "
+            "(get a key at https://console.anthropic.com/)",
+            file=sys.stderr,
+        )
+        return 5
+
     with tempfile.TemporaryDirectory(prefix="skill-sentinel-") as tmpdir:
         try:
             source_dir = resolve_skill_source(args.path_or_url, Path(tmpdir))
@@ -95,6 +117,16 @@ def _run_scan(args: argparse.Namespace) -> int:
             bundled_files = discover_bundled_files(skill_dir)
             candidates = build_invocation_candidates(skill_dir, bundled_files, metadata.body, args.invoke)
 
+            semantic_review_ran = False
+            if args.semantic_review:
+                try:
+                    heuristic_findings = heuristic_findings + review_skill_instructions(
+                        metadata.name, metadata.description, metadata.body, source=str(skill_dir)
+                    )
+                    semantic_review_ran = True
+                except SemanticReviewError as exc:
+                    print(f"warning: semantic review skipped for {skill_dir}: {exc}", file=sys.stderr)
+
             sandbox_results = None
             if not args.no_sandbox:
                 if not docker_checked:
@@ -117,7 +149,11 @@ def _run_scan(args: argparse.Namespace) -> int:
                         print(f"error: {exc}", file=sys.stderr)
                         return 4
 
-            reports.append(build_report(skill_dir, metadata, heuristic_findings, sandbox_results, candidates))
+            reports.append(
+                build_report(
+                    skill_dir, metadata, heuristic_findings, sandbox_results, candidates, semantic_review_ran
+                )
+            )
 
         if not reports:
             print(f"error: No valid SKILL.md could be parsed under {source_dir}", file=sys.stderr)

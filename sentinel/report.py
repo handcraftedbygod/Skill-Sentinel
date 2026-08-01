@@ -192,6 +192,7 @@ class Report:
     risk_level: Severity
     invocations: list[str]
     generated_at: float = field(default_factory=time.time)
+    semantic_review_ran: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -202,6 +203,7 @@ class Report:
             "risk_level": self.risk_level.value,
             "invocations": self.invocations,
             "generated_at": self.generated_at,
+            "semantic_review_ran": self.semantic_review_ran,
             "findings": [f.to_dict() for f in self.findings],
         }
 
@@ -220,6 +222,7 @@ def build_report(
     heuristic_findings: list[Finding],
     sandbox_results: list[SandboxRunResult] | None,
     invocations: list[str],
+    semantic_review_ran: bool = False,
 ) -> Report:
     all_findings = list(heuristic_findings)
     for result in sandbox_results or []:
@@ -235,6 +238,7 @@ def build_report(
         risk_score=score,
         risk_level=level,
         invocations=invocations,
+        semantic_review_ran=semantic_review_ran,
     )
 
 
@@ -296,11 +300,24 @@ def render_markdown(report: Report) -> str:
         lines.append("- None found.")
     lines.append("")
 
+    semantic_findings = [f for f in report.findings if f.category == "semantic_review"]
+    lines.append("## Semantic / instruction review")
+    if semantic_findings:
+        for f in semantic_findings:
+            lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}")
+            if f.detail:
+                lines.append(f'  > "{f.detail}"')
+    elif report.semantic_review_ran:
+        lines.append("- Ran, nothing found.")
+    else:
+        lines.append("- Not run (use `--semantic-review`, requires `ANTHROPIC_API_KEY`).")
+    lines.append("")
+
     other_findings = [
         f
         for f in report.findings
         if f
-        not in network_findings + subprocess_findings + file_findings + static_findings
+        not in network_findings + subprocess_findings + file_findings + static_findings + semantic_findings
     ]
     if other_findings:
         lines.append("## Other findings")
