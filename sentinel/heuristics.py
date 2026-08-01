@@ -12,6 +12,14 @@ from sentinel.skillmd import discover_bundled_files
 
 BASE64_BLOB_RE = re.compile(rb"[A-Za-z0-9+/]{%d,}={0,2}" % 200)
 
+# A blob immediately preceded by a standard data: URI prefix is a declared inline
+# asset (badge logos, favicons, embedded images in READMEs) — unambiguous, since
+# nothing about SkillCloak's threat model (a payload assigned to a variable for
+# later decode-and-exec) needs to masquerade as one. Found repeated 3x
+# independently in real README.md badges during the launch scan (shields.io-style
+# custom-logo badges all embed an SVG this way).
+DATA_URI_PREFIX_RE = re.compile(rb"data:[\w.+-]+/[\w.%+-]+;base64,$")
+
 DECODE_CALL_NAMES = {
     "b64decode",
     "b64decode".upper(),
@@ -39,15 +47,21 @@ TEXT_EXTENSIONS = {".py", ".js", ".ts", ".sh", ".rb", ".pl", ".txt", ".md", ".js
 # this one well-known, inert, git-shipped pattern is allowlisted.
 GIT_HOOK_SAMPLE_RE = re.compile(r"^\.git/hooks/[^/]+\.sample$")
 
-# Well-known maintainer/CI tooling directories. Unlike GIT_HOOK_SAMPLE_RE this is
-# real, custom, attacker-writable content — not suppressed, just downgraded from
-# CRITICAL to MEDIUM (still flagged, still visible; an attacker could still hide
-# here). Found repeated 6x independently across the launch scan, always CI
+# Well-known maintainer/CI/packaging tooling directories. Unlike GIT_HOOK_SAMPLE_RE
+# this is real, custom, attacker-writable content — not suppressed, just downgraded
+# from CRITICAL to MEDIUM (still flagged, still visible; an attacker could still
+# hide here). Found repeated 6x independently across the launch scan, always CI
 # lint/test/commit-hook scripts, never referenced by or invoked as part of
 # running the skill itself: .github/scripts/*.sh (swaponline/MultiCurrencyWallet,
 # marmotdata/marmot x2, dreamwing/clawbridge), .githooks/* (Dicklesworthstone/
 # mcp_agent_mail, wgzhao/Addax x2), .claude/hooks/* (sheeki03/tirith).
-DEV_TOOLING_DIR_RE = re.compile(r"^(\.github/|\.githooks/|\.gitlab-ci/|\.claude/hooks/|\.husky/)")
+# .codex-marketplace/ added after sergebulaev/linkedin-skills: confirmed benign —
+# the repo's own scripts/sync_codex_marketplace.py generates it as a byte-for-byte
+# mirror of the already-visible top-level content, for OpenAI Codex's marketplace
+# packaging format.
+DEV_TOOLING_DIR_RE = re.compile(
+    r"^(\.github/|\.githooks/|\.gitlab-ci/|\.claude/hooks/|\.husky/|\.codex-marketplace/)"
+)
 
 # Below this many base64 blobs in one file, list each individually. At or above
 # it, collapse into one finding — see scan_file_for_base64_blobs.
@@ -73,7 +87,11 @@ def scan_file_for_base64_blobs(path: Path, min_length: int = 200) -> list[Findin
         return []
 
     pattern = BASE64_BLOB_RE if min_length == 200 else re.compile(rb"[A-Za-z0-9+/]{%d,}={0,2}" % min_length)
-    blobs = [match.group(0) for match in pattern.finditer(data)]
+    blobs = [
+        match.group(0)
+        for match in pattern.finditer(data)
+        if not DATA_URI_PREFIX_RE.search(data[max(0, match.start() - 100) : match.start()])
+    ]
     if not blobs:
         return []
 
