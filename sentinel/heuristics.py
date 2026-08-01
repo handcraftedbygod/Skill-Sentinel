@@ -315,8 +315,20 @@ OUTBOUND_DATA_FLAG_RE = re.compile(
 # remote code execution, not just data leakage, and just as invisible to
 # every other check (never auto-invoked, since it's plain text, not a
 # bundled/invocable script).
+#
+# MEDIUM, not CRITICAL, and bash/sh/zsh/pwsh/powershell only (not python/node):
+# found flagging Ollama's and Foundry's own official, legitimate one-line
+# installers verbatim from their README docs — "curl | sh" is one of the most
+# common legitimate CLI-tool install idioms industry-wide, syntactically
+# identical whether the target is a trusted vendor or an attacker. Piping into
+# a shell interpreter always executes the download as code, so it's still
+# worth surfacing — just not at the same alarm level as the exfil pattern
+# above, which has no comparably common benign shape. python3/node dropped
+# entirely: "curl ... | python3 -m json.tool" is a completely standard,
+# harmless way to pretty-print an API response — bare python3/node don't
+# execute stdin as code the way a shell interpreter unconditionally does.
 REMOTE_EXEC_PIPE_RE = re.compile(
-    r"\b(curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(bash|sh|zsh|python3?|node|pwsh|powershell)\b"
+    r"\b(curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(bash|sh|zsh|pwsh|powershell)\b"
     r"|\b(Invoke-WebRequest|Invoke-RestMethod|iwr)\b[^\n|]*\|\s*(?:iex|Invoke-Expression)\b",
     re.IGNORECASE,
 )
@@ -335,10 +347,11 @@ def scan_text_for_prose_instructions(text: str, source: str) -> list[Finding]:
             findings.append(
                 Finding(
                     category="skill_md_remote_exec_instruction",
-                    severity=Severity.CRITICAL,
+                    severity=Severity.MEDIUM,
                     summary="Prose instructions tell the agent to pipe a remote download "
                     "straight into a shell/interpreter — a plain-text instruction, not a "
-                    "bundled script",
+                    "bundled script. Worth a human look: this is also a common legitimate "
+                    "CLI-tool install idiom, syntactically identical either way",
                     detail=f"line {line_no}: {line.strip()[:200]}",
                     source=source,
                 )
