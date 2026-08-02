@@ -1,5 +1,9 @@
 # Skill Sentinel (WORK IN PROGRESS)
 
+[![CI](https://img.shields.io/github/actions/workflow/status/handcraftedbygod/Skill-Sentinel/ci.yml?branch=main&label=tests)](https://github.com/handcraftedbygod/Skill-Sentinel/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/handcraftedbygod/Skill-Sentinel)](LICENSE)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+
 **The first practical runtime auditor against SkillCloak-style attacks on Claude Skills.**
 
 A July 2026 academic paper ([arXiv:2607.02357](https://arxiv.org/abs/2607.02357), HKUST) disclosed **SkillCloak**: malicious Claude/Codex skills that hide payloads (self-extracting blobs, obfuscated instructions in `.git/`-style paths) and evade static scanners more than 90% of the time. It made Hacker News and thehackernews.com. Every existing "skill security" tool out there is static-analysis-only, which is exactly what the paper shows is bypassable.
@@ -43,23 +47,15 @@ A single git URL can also point at a collection repo, one repo bundling many ski
 
 ## Example output
 
-Scanning Skill Sentinel's own `examples/malicious-sample` test fixture, a synthetic, inert SkillCloak-style skill bundled in this repo specifically to exercise these checks, produces:
+Scanning Skill Sentinel's own `examples/malicious-sample` test fixture, a synthetic, inert SkillCloak-style skill bundled in this repo specifically to exercise these checks, produces this, unedited:
 
-```
-# Skill Sentinel report: pdf-formatter
+![Terminal output of a skill-sentinel scan flagging a CRITICAL risk score with a colored MEDIUM, HIGH, and CRITICAL finding](docs/assets/terminal-scan.png)
 
-**Risk score:** 25 (CRITICAL)
+And the `--html` report for that same scan:
 
-## Network activity
-- **[CRITICAL]** POST https://evil-collector.io/exfil (request body looks like it may contain a secret)
+![Self-contained HTML report showing the same three findings with colored severity badges](docs/assets/html-report.png)
 
-## Static red flags
-- **[MEDIUM]** Long base64-looking string (396 chars) in format.py
-- **[HIGH]** exec() of decoded content in format.py
-- **[CRITICAL]** Executable content at hidden path .cache/.helper, not referenced by SKILL.md
-```
-
-That `POST` line is real, decrypted request data captured by the sandbox's mitmproxy interception, not a guess from a bare IP. That's the difference dynamic analysis makes. Nothing in that scenario ever reaches the real internet: see [Safety model](#safety-model) below.
+This fixture's own `SKILL.md` says up front that it is inert. It never makes a network call, so this particular run only exercises the static pass: the self-decoding payload and the hidden executable at a dotfile path, the exact structural obfuscation the SkillCloak paper describes. The sandbox's decrypted-network-capture path (a skill that actually calls out, and what the intercepted request looks like in a report) is described under [How it works](#how-it-works) below, and see [Safety model](#safety-model) for why running that fixture never risks the real internet either way.
 
 ## How it works
 
@@ -90,7 +86,7 @@ See [`.github/workflows/skill-ci.yml.example`](.github/workflows/skill-ci.yml.ex
 
 ## Real-world findings
 
-_Coming soon: results from scanning a batch of real public Claude Skill repos._
+One real case so far, below. A broader scan across a larger batch of public Claude Skill repos is still on the list.
 
 **Validated against a real malicious sample.** [`snyk-labs/toxicskills-goof`](https://github.com/snyk-labs/toxicskills-goof), a third-party security research repo, includes a "fake Vercel skill" with no code at all: a plain-text "Prerequisites" instruction telling the agent to run a command that fingerprints the host and posts it to a pastebin, framed as required for the skill to work. Scanning it with Skill Sentinel correctly flags it CRITICAL. Two real gaps surfaced and got fixed along the way: every skill in that repo lives under a conventional agent-tool install directory (`.agents/skills/`, `.gemini/skills/`) that a naive "skip all dot-directories" rule made invisible, and one skill uses a lowercase `skill.md` filename.
 
@@ -101,6 +97,10 @@ Where this goes next, roughly in priority order:
 - **Supply-chain / dependency analysis.** Several real skills run `pip install`/`npm install` at scan time. Real-world attacks on npm/PyPI overwhelmingly happen via typosquatting or dependency confusion, not hand-written obfuscated payloads. That's the dominant pattern in adjacent ecosystems today, and this tool doesn't yet check what a skill actually pulls in against what it declares, or against known-malicious package lists.
 - **Sandbox-evasion resistance.** The sandbox has a consistent, in-principle-detectable fingerprint (the mitmproxy CA, the sinkhole behavior). A sufficiently deliberate attacker could check for that and behave clean during scanning, the standard malware-analysis arms race. Some jitter/variation in the sandbox environment closes that gap before it becomes a real one.
 - **Re-scan on update.** A skill can pass review clean and turn malicious later. Several real skills scanned here have self-update mechanisms (`git pull`, checking their own `SKILL.md` on GitHub). Point-in-time scanning doesn't catch a skill going bad after publication; periodic re-scanning of previously-cleared skills would.
+
+## Security
+
+Found a sandbox escape, a sinkhole bypass, or a new obfuscation technique this tool misses? See [SECURITY.md](SECURITY.md) for how to report it privately.
 
 ## License
 
