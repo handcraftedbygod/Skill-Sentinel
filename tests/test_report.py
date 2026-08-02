@@ -7,11 +7,13 @@ from sentinel.findings import Confidence, Finding, Severity
 from sentinel.report import (
     Report,
     build_report,
+    diff_sandbox_results,
     render_html,
     render_html_multi,
     render_json,
     render_markdown,
     sandbox_result_findings,
+    sandbox_result_signature,
 )
 from sentinel.sandbox import HttpFlow, SandboxRunResult, StraceEvent
 from sentinel.skillmd import SkillMetadata
@@ -161,6 +163,85 @@ def test_many_spawns_of_the_same_command_collapse_to_one_finding():
     spawn_findings = [f for f in findings if f.category == "unexpected_subprocess"]
     assert len(spawn_findings) == 1
     assert "5x" in spawn_findings[0].summary
+
+
+def _sandbox_result(invocation: str, events=None, flows=None) -> SandboxRunResult:
+    return SandboxRunResult(
+        invocation=invocation,
+        exit_code=0,
+        timed_out=False,
+        strace_events=events or [],
+        dns_queries=[],
+        http_flows=flows or [],
+    )
+
+
+def test_sandbox_result_signature_ignores_pid_and_timestamp_noise():
+    # Two runs of the same deterministic skill get different PIDs/timestamps
+    # from strace every time. The signature must not treat that as a real
+    # behavioral difference, or --differential would false-positive on every scan.
+    events_a = [_execve_event("/usr/bin/sh", ["sh", "-c", "python3 x.py"])]
+    events_b = [_execve_event("/usr/bin/sh", ["sh", "-c", "python3 x.py"])]
+    result_a = _sandbox_result("python3 x.py", events=events_a)
+    result_b = _sandbox_result("python3 x.py", events=events_b)
+    assert sandbox_result_signature(result_a) == sandbox_result_signature(result_b)
+
+
+def test_diff_sandbox_results_flags_behavior_only_in_varied_run():
+    baseline = _sandbox_result("python3 x.py")
+    varied = _sandbox_result(
+        "python3 x.py",
+        flows=[HttpFlow(kind="http_request", host="evil.example", port=443, method="GET", path="/beacon")],
+    )
+    findings = diff_sandbox_results(baseline, varied)
+    assert len(findings) == 1
+    assert findings[0].category == "differential_behavior_change"
+    assert "varied" in findings[0].summary
+    assert "evil.example" in findings[0].summary
+
+
+def test_diff_sandbox_results_flags_behavior_only_in_baseline_run():
+    baseline = _sandbox_result(
+        "python3 x.py",
+        flows=[HttpFlow(kind="http_request", host="evil.example", port=443, method="GET", path="/beacon")],
+    )
+    varied = _sandbox_result("python3 x.py")
+    findings = diff_sandbox_results(baseline, varied)
+    assert len(findings) == 1
+    assert "default sandbox conditions, not when" in findings[0].summary
+
+
+def test_diff_sandbox_results_distinguishes_same_command_different_args():
+    # Regression test: a real live run showed subprocess.run(["echo", "a"]) in
+    # both runs and subprocess.run(["echo", "b"]) only in the varied run being
+    # missed entirely, because the signature was keyed on command name alone
+    # ("echo" in both), not on which arguments it was actually called with.
+    wrapper_and_invocation = [
+        _execve_event("/usr/bin/sh", ["sh", "-c", "python3 x.py"]),
+        _execve_event("/usr/bin/python3", ["python3", "x.py"]),
+    ]
+    baseline = _sandbox_result(
+        "python3 x.py",
+        events=wrapper_and_invocation + [_execve_event("/usr/bin/echo", ["echo", "always-happens"])],
+    )
+    varied = _sandbox_result(
+        "python3 x.py",
+        events=wrapper_and_invocation
+        + [
+            _execve_event("/usr/bin/echo", ["echo", "always-happens"]),
+            _execve_event("/usr/bin/echo", ["echo", "only-when-varied"]),
+        ],
+    )
+    findings = diff_sandbox_results(baseline, varied)
+    assert len(findings) == 1
+    assert "only-when-varied" in findings[0].summary
+
+
+def test_diff_sandbox_results_no_findings_when_identical():
+    flows = [HttpFlow(kind="http_request", host="api.example", port=443, method="GET", path="/data")]
+    baseline = _sandbox_result("python3 x.py", flows=flows)
+    varied = _sandbox_result("python3 x.py", flows=list(flows))
+    assert diff_sandbox_results(baseline, varied) == []
 
 
 def _clean_report(name: str = "clean-skill") -> Report:

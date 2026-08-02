@@ -62,6 +62,7 @@ CATEGORY_METADATA: dict[str, tuple[Confidence, str]] = {
     "tls_handshake_failed": (Confidence.MEDIUM, ""),
     "out_of_scope_file_access": (Confidence.HIGH, "T1005"),
     "unexpected_subprocess": (Confidence.HIGH, "T1059"),
+    "differential_behavior_change": (Confidence.MEDIUM, "T1497"),
     "network_connection": (Confidence.LOW, "T1071"),
     "semantic_review": (Confidence.MEDIUM, ""),
 }
@@ -92,6 +93,19 @@ def _execve_command_name(raw_args: str) -> str:
     match = EXECVE_PATH_RE.match(raw_args)
     path = match.group(1) if match else raw_args
     return posixpath.basename(path)
+
+
+EXECVE_PATH_AND_ARGV_RE = re.compile(r'^(".*?",\s*\[.*?\])')
+
+
+def _execve_path_and_argv(raw_args: str) -> str:
+    """Path + argv only, dropping the trailing envp pointer/var-count. Used for
+    --differential's signature, not the near-duplicate grouping above: the two
+    runs intentionally carry a different env var count (DIFFERENTIAL_ENV adds
+    two), so including that count would make every execve look different
+    between runs regardless of what the skill actually did."""
+    match = EXECVE_PATH_AND_ARGV_RE.match(raw_args)
+    return match.group(1) if match else raw_args
 
 
 def _body_looks_like_secret(body_base64: str) -> bool:
@@ -250,6 +264,67 @@ def sandbox_result_findings(result: SandboxRunResult) -> list[Finding]:
             )
         )
 
+    return findings
+
+
+def sandbox_result_signature(result: SandboxRunResult) -> frozenset:
+    """A normalized, comparable summary of what one sandbox run actually did,
+    used by --differential to spot a skill that behaves differently between two
+    runs of the same candidate under different-looking conditions. Built from
+    the same extraction functions sandbox_result_findings() uses, at a higher
+    level than raw strace_events, which vary run-to-run on PIDs and timestamps
+    alone, even for a totally deterministic skill."""
+    signature: set = set()
+
+    for flow in result.http_flows:
+        if flow.kind == "http_request":
+            signature.add(("network", flow.method, flow.host, flow.path))
+
+    for event in strace_notable_openat_events(result.strace_events):
+        directory = posixpath.dirname(_openat_path(event.raw_args))
+        signature.add(("file", directory))
+
+    for event in strace_notable_execve_events(result.strace_events, result.invocation):
+        signature.add(("subprocess", _execve_path_and_argv(event.raw_args)))
+
+    return frozenset(signature)
+
+
+def diff_sandbox_results(baseline: SandboxRunResult, varied: SandboxRunResult) -> list[Finding]:
+    """Compare a candidate's default-conditions run against the same candidate
+    re-run with a different hostname/env (--differential, see sandbox.py's
+    DIFFERENTIAL_HOSTNAME/DIFFERENTIAL_ENV). Behavior that shows up in only one
+    of the two runs is the signal real sandbox-evasion checks produce: a skill
+    branching on what it detects about its environment, rather than doing the
+    same thing regardless of it. Either direction is reported: "worse when it
+    looks like a real machine" is the classic case, but "worse specifically
+    under the default sandbox signature" is the same underlying signal viewed
+    from the other side."""
+    baseline_sig = sandbox_result_signature(baseline)
+    varied_sig = sandbox_result_signature(varied)
+    source = f"invocation: {baseline.invocation}"
+
+    findings = []
+    for kind, *detail in sorted(varied_sig - baseline_sig):
+        findings.append(
+            Finding(
+                category="differential_behavior_change",
+                severity=Severity.MEDIUM,
+                summary=f"Only observed when hostname/env were varied, not under the default "
+                f"sandbox conditions: {kind} {' '.join(str(d) for d in detail)}",
+                source=source,
+            )
+        )
+    for kind, *detail in sorted(baseline_sig - varied_sig):
+        findings.append(
+            Finding(
+                category="differential_behavior_change",
+                severity=Severity.MEDIUM,
+                summary=f"Only observed under the default sandbox conditions, not when "
+                f"hostname/env were varied: {kind} {' '.join(str(d) for d in detail)}",
+                source=source,
+            )
+        )
     return findings
 
 

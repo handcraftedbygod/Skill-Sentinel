@@ -13,8 +13,10 @@ from pathlib import Path
 
 from sentinel.findings import Severity
 from sentinel.heuristics import run_heuristics
-from sentinel.report import build_report, render_html_multi, render_json_multi, render_markdown_multi
+from sentinel.report import build_report, diff_sandbox_results, render_html_multi, render_json_multi, render_markdown_multi
 from sentinel.sandbox import (
+    DIFFERENTIAL_ENV,
+    DIFFERENTIAL_HOSTNAME,
     DockerUnavailableError,
     SentinelError,
     build_invocation_candidates,
@@ -337,6 +339,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "ANTHROPIC_API_KEY. Opt-in — off by default.",
     )
     scan.add_argument(
+        "--differential",
+        action="store_true",
+        help="Re-run each candidate a second time with a different container hostname "
+        "and interactive-session-looking env vars, and flag behavior that only shows up "
+        "in one of the two runs (a real sandbox-evasion signal). Opt-in, roughly doubles "
+        "sandbox runtime, off by default.",
+    )
+    scan.add_argument(
         "--html",
         metavar="FILE",
         nargs="?",
@@ -427,6 +437,19 @@ def _run_scan(args: argparse.Namespace) -> int:
                             allow_network=args.allow_network,
                             timeout_s=args.timeout,
                         )
+                        if args.differential:
+                            varied_results = run_skill_in_sandbox(
+                                skill_dir,
+                                candidates,
+                                allow_network=args.allow_network,
+                                timeout_s=args.timeout,
+                                hostname=DIFFERENTIAL_HOSTNAME,
+                                env_overrides=DIFFERENTIAL_ENV,
+                            )
+                            for baseline_result, varied_result in zip(sandbox_results, varied_results):
+                                heuristic_findings = heuristic_findings + diff_sandbox_results(
+                                    baseline_result, varied_result
+                                )
                     except SentinelError as exc:
                         print(f"error: {exc}", file=sys.stderr)
                         return 4

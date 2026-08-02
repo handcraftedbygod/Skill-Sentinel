@@ -433,22 +433,38 @@ def parse_mitm_log(path: Path) -> list[HttpFlow]:
 DEFAULT_TIMEOUT_S = 60
 
 
+# A container's default hostname is docker's own randomized hex ID, nothing
+# like a real machine. --differential's "varied" pass overrides it to something
+# a real desktop/CI box would plausibly have, plus one interactive-session env
+# var (TERM, unset by default since `docker run` here has no pseudo-TTY) that's
+# a common, well-documented sandbox-vs-real-environment check target. Not meant
+# to defeat a determined, deliberate evasion check (see the README's roadmap),
+# just cheap enough to catch a skill that branches on the most obvious signals.
+DIFFERENTIAL_HOSTNAME = "build-worker-04"
+DIFFERENTIAL_ENV = {"TERM": "xterm-256color", "SSH_CONNECTION": "10.0.0.5 52341 10.0.0.2 22"}
+
+
 def run_skill_in_sandbox(
     skill_dir: Path,
     candidates: list[str],
     allow_network: bool = False,
     timeout_s: int = DEFAULT_TIMEOUT_S,
     image_tag: str | None = None,
+    hostname: str | None = None,
+    env_overrides: dict[str, str] | None = None,
 ) -> list[SandboxRunResult]:
     """Run each invocation candidate in its own container lifetime, each with its
-    own strace pass, and return one SandboxRunResult per candidate."""
+    own strace pass, and return one SandboxRunResult per candidate.
+
+    hostname/env_overrides exist for --differential's second, "varied" pass;
+    left unset, every run uses docker's own default hostname and no extra env."""
     ensure_docker_available()
     tag = image_tag or build_sandbox_image()
 
     results: list[SandboxRunResult] = []
     for candidate in candidates:
         results.append(
-            _run_one_candidate(skill_dir, candidate, tag, allow_network, timeout_s)
+            _run_one_candidate(skill_dir, candidate, tag, allow_network, timeout_s, hostname, env_overrides)
         )
     return results
 
@@ -459,6 +475,8 @@ def _run_one_candidate(
     tag: str,
     allow_network: bool,
     timeout_s: int,
+    hostname: str | None = None,
+    env_overrides: dict[str, str] | None = None,
 ) -> SandboxRunResult:
     container_name = f"sentinel-run-{uuid.uuid4().hex[:12]}"
     skill_dir = skill_dir.resolve()
@@ -486,6 +504,11 @@ def _run_one_candidate(
         "-v",
         f"{scratch_dir}:/scratch:rw",
     ]
+
+    if hostname:
+        docker_cmd += ["--hostname", hostname]
+    for key, value in (env_overrides or {}).items():
+        docker_cmd += ["-e", f"{key}={value}"]
 
     if allow_network:
         # No sinkhole, no interception — strace still runs, but there is no
