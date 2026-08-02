@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
+import json
 import os
 import re
 import sys
@@ -38,6 +40,7 @@ DEFAULT_HTML_REPORT = "skill-sentinel-report.html"
 # when writing to a real terminal (never to -o FILE or --json, which must
 # stay exactly what they claim to be — plain text / valid JSON).
 ANSI_RESET = "\033[0m"
+ANSI_BOLD = "\033[1m"
 ANSI_BY_SEVERITY = {
     "LOW": "\033[32m",  # green
     "MEDIUM": "\033[33m",  # yellow
@@ -56,13 +59,250 @@ def _colorize_severity_tags(markdown: str) -> str:
     return _SEVERITY_TAG_RE.sub(_replace, markdown)
 
 
+def _write_line(text: str, stream) -> None:
+    # Same fix as the report writer below: the hero/welcome screen always
+    # contains block-art and box-drawing characters, and sys.stdout/stderr's
+    # encoding defaults to the console's legacy codepage (e.g. cp1252 on
+    # Windows) when not attached to a real interactive terminal — plain
+    # print() would crash outright rather than just render imperfectly.
+    stream.buffer.write(text.encode("utf-8", errors="replace"))
+    stream.buffer.write(b"\n")
+
+
+ANSI_PRIMARY = "\033[38;5;33m"  # defensive blue — the wordmark's and shield's fill
+ANSI_WHITE = "\033[97m"  # tagline/footer text, and the wordmark's 3D outline
+
+# Built from rectangles instead of hand-typed strings — a 47-cell row typed
+# by hand is exactly how the N glyph got silently mis-sized earlier. Bars
+# are 2 cells thick, not 1: any full-width bar gets a full-width outline
+# row immediately above AND below it regardless of thickness (every column
+# there sits directly next to the bar), so a 1-thick bar is 100% outline
+# on its own two neighbor rows. Thickening the bar itself is what keeps
+# blue, not white, the dominant color near it. Buffer rows keep that
+# unavoidable bleed from also washing into the strokes further away.
+_GLYPH_HEIGHT = 14
+
+
+def _rect_glyph(width: int, rects: list[tuple[int, int, int, int]]) -> list[str]:
+    """rects: (row_start, row_end_inclusive, col_start, col_end_inclusive)."""
+    grid = [[False] * width for _ in range(_GLYPH_HEIGHT)]
+    for r0, r1, c0, c1 in rects:
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                grid[r][c] = True
+    return ["".join("█" if cell else " " for cell in row) for row in grid]
+
+
+def _n_glyph() -> list[str]:
+    # Side verticals plus a staircase diagonal, computed rather than typed
+    # so it's guaranteed symmetric and every row is the same width.
+    width = 9
+    grid = [[False] * width for _ in range(_GLYPH_HEIGHT)]
+    for r in range(_GLYPH_HEIGHT):
+        grid[r][0] = True
+        grid[r][width - 1] = True
+        diag_col = 1 + round(r * (width - 3) / (_GLYPH_HEIGHT - 1))
+        grid[r][diag_col] = True
+    return ["".join("█" if cell else " " for cell in row) for row in grid]
+
+
+_LETTER_GLYPHS = {
+    "S": _rect_glyph(7, [(0, 1, 0, 6), (3, 4, 0, 0), (6, 7, 0, 6), (9, 10, 6, 6), (12, 13, 0, 6)]),
+    "E": _rect_glyph(7, [(0, 1, 0, 6), (3, 4, 0, 0), (6, 7, 0, 6), (9, 10, 0, 0), (12, 13, 0, 6)]),
+    "N": _n_glyph(),
+    "T": _rect_glyph(7, [(0, 1, 0, 6), (3, 13, 3, 3)]),
+    "I": _rect_glyph(7, [(0, 1, 0, 6), (3, 10, 3, 3), (12, 13, 0, 6)]),
+    "L": _rect_glyph(7, [(0, 10, 0, 0), (12, 13, 0, 6)]),
+}
+
+# A helmet silhouette generated from a per-row fill width rather than
+# hand-typed, so it stays symmetric: a crest, a rounding dome, then a brim
+# that flares out wider than the dome above it.
+_HELMET_ROW_WIDTHS = [3, 7, 9, 9, 9, 11, 7]
+_HELMET_BOX_WIDTH = 11
+
+_HERO_GAP = 3  # columns between the wordmark and the helmet
+
+
+_LETTER_GAP = "   "  # 3 cells: a 1-cell gap gets fully swallowed by the outline pass
+
+
+def _block_wordmark(word: str) -> list[str]:
+    glyphs = [_LETTER_GLYPHS[letter] for letter in word]
+    return [_LETTER_GAP.join(glyph[row] for glyph in glyphs) for row in range(_GLYPH_HEIGHT)]
+
+
+def _helmet_rows() -> list[str]:
+    rows = []
+    for fill_width in _HELMET_ROW_WIDTHS:
+        pad = (_HELMET_BOX_WIDTH - fill_width) // 2
+        rows.append(" " * pad + "█" * fill_width + " " * pad)
+    return rows
+
+
+def _add_outline(rows: list[str]) -> tuple[list[str], list[str]]:
+    """Sticker-style outline: every empty cell touching a filled cell in any
+    of the 8 surrounding directions becomes a 1-cell white outline hugging
+    the whole silhouette — this is the actual effect GitHub Copilot's CLI
+    banner uses on its wordmark, not a corner-only drop shadow."""
+    height = len(rows)
+    width = max(len(row) for row in rows)
+    padded = [row.ljust(width) for row in rows]
+
+    pad_h, pad_w = height + 2, width + 2
+    fill = [[False] * pad_w for _ in range(pad_h)]
+    for r in range(height):
+        for c in range(width):
+            if padded[r][c] != " ":
+                fill[r + 1][c + 1] = True
+
+    outline = [[False] * pad_w for _ in range(pad_h)]
+    for r in range(pad_h):
+        for c in range(pad_w):
+            if fill[r][c]:
+                continue
+            neighbors = (
+                fill[nr][nc]
+                for nr in (r - 1, r, r + 1)
+                for nc in (c - 1, c, c + 1)
+                if (nr, nc) != (r, c) and 0 <= nr < pad_h and 0 <= nc < pad_w
+            )
+            outline[r][c] = any(neighbors)
+
+    fill_rows = ["".join("█" if cell else " " for cell in row) for row in fill]
+    outline_rows = ["".join("█" if cell else " " for cell in row) for row in outline]
+    return fill_rows, outline_rows
+
+
+def _compose_hero_rows() -> list[str]:
+    """Tagged (not yet colored) rows: 'F' fill, 'S' outline, ' ' empty —
+    shared between the wordmark and the helmet. Plain-text composition
+    first, so alignment never has to account for ANSI escape width."""
+
+    def _tag(fill_rows: list[str], outline_rows: list[str]) -> list[str]:
+        return [
+            "".join("F" if f != " " else ("S" if s != " " else " ") for f, s in zip(fr, oro))
+            for fr, oro in zip(fill_rows, outline_rows)
+        ]
+
+    word_tagged = _tag(*_add_outline(_block_wordmark("SENTINEL")))
+    icon_tagged = _tag(*_add_outline(_helmet_rows()))
+
+    height = max(len(word_tagged), len(icon_tagged))
+    word_width = len(word_tagged[0])
+    icon_width = len(icon_tagged[0])
+    word_tagged += [" " * word_width] * (height - len(word_tagged))
+    icon_tagged += [" " * icon_width] * (height - len(icon_tagged))
+
+    return [w + " " * _HERO_GAP + i for w, i in zip(word_tagged, icon_tagged)]
+
+
+def _render_tagged_row(tagged_row: str, color: bool) -> str:
+    code_by_tag = {"F": ANSI_PRIMARY, "S": ANSI_WHITE}
+    out = []
+    for tag in tagged_row:
+        if tag == " ":
+            out.append(" ")
+        elif color:
+            out.append(f"{code_by_tag[tag]}█{ANSI_RESET}")
+        else:
+            out.append("█")
+    return "".join(out)
+
+
+def _package_version() -> str:
+    try:
+        return importlib.metadata.version("skill-sentinel")
+    except importlib.metadata.PackageNotFoundError:
+        return "dev"
+
+
+def _installed_commit() -> str | None:
+    # Only present for a `pip install git+https://...` install (see
+    # README's own install command); a local editable/dev install has no
+    # vcs_info, so this quietly returns None rather than fabricating one.
+    # Decorative footer detail — must never crash the CLI over it.
+    try:
+        raw = importlib.metadata.distribution("skill-sentinel").read_text("direct_url.json")
+        commit = json.loads(raw).get("vcs_info", {}).get("commit_id") if raw else None
+        return commit[:8] if commit else None
+    except Exception:
+        return None
+
+
+def _build_banner(color: bool) -> str:
+    def _styled(text: str, code: str) -> str:
+        return f"{code}{text}{ANSI_RESET}" if color else text
+
+    hero_rows_tagged = _compose_hero_rows()
+    width = len(hero_rows_tagged[0])
+    tagline = "Behavioral scanner for Claude Skills"
+    caption = f"CLI v{_package_version()}"
+
+    lines = [
+        "⌜" + " " * (width + 2) + "⌝",
+        "",
+        "  " + _styled(tagline, ANSI_WHITE),
+        "",
+    ]
+    lines += ["  " + _render_tagged_row(row, color) for row in hero_rows_tagged]
+    lines += [
+        "  " + " " * (width - len(caption)) + _styled(caption, ANSI_WHITE),
+        "",
+        "⌞" + " " * (width + 2) + "⌟",
+    ]
+    return "\n".join(lines)
+
+
+def _build_footer(color: bool) -> str:
+    version_line = f"skill-sentinel v{_package_version()}"
+    commit = _installed_commit()
+    if commit:
+        version_line += f" · {commit}"
+    return "  " + (f"{ANSI_WHITE}{version_line}{ANSI_RESET}" if color else version_line)
+
+
+def _maybe_print_banner() -> None:
+    if sys.stderr.isatty():
+        _write_line(_build_banner(color=True), sys.stderr)
+        _write_line("", sys.stderr)
+        _write_line(_build_footer(color=True), sys.stderr)
+        _write_line("", sys.stderr)
+
+
+_QUICKSTART = [
+    ("skill-sentinel scan ./my-skill", "scan a local skill directory"),
+    ("skill-sentinel scan <git-url>", "scan a skill, or a whole collection repo, from git"),
+    ("skill-sentinel scan ./my-skill --html", "also write a self-contained HTML report"),
+]
+
+
+def _build_welcome(color: bool) -> str:
+    def _styled(text: str, code: str) -> str:
+        return f"{code}{text}{ANSI_RESET}" if color else text
+
+    dot = _styled("●", ANSI_PRIMARY)
+    width = max(len(cmd) for cmd, _ in _QUICKSTART)
+    lines = ["  " + _styled("Get started", ANSI_BOLD + ANSI_WHITE), ""]
+    for cmd, blurb in _QUICKSTART:
+        lines.append(f"  {dot} {cmd.ljust(width)}   {blurb}")
+    lines += ["", "  Run 'skill-sentinel scan --help' for the full list of options."]
+    return "\n".join(lines)
+
+
+def _print_welcome() -> None:
+    _write_line(_build_welcome(color=sys.stdout.isatty()), sys.stdout)
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="skill-sentinel",
         description="A behavioral scanner for Claude Skills — sandboxes a skill and "
         "reports what it actually does, instead of trusting its description.",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    # Not required: a bare `skill-sentinel` invocation shows the welcome screen
+    # (see _print_welcome) instead of an argparse usage error.
+    subparsers = parser.add_subparsers(dest="command", required=False)
 
     scan = subparsers.add_parser("scan", help="Scan a skill directory or git URL")
     scan.add_argument("path_or_url", help="Local path to a skill directory, or a git URL")
@@ -229,14 +469,15 @@ def _run_scan(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _maybe_print_banner()
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 
     if args.command == "scan":
         return _run_scan(args)
 
-    parser.print_help()
-    return 2
+    _print_welcome()
+    return 0
 
 
 if __name__ == "__main__":
