@@ -1,6 +1,6 @@
 # Security policy
 
-Skill Sentinel runs untrusted code inside a Docker sandbox and intercepts its network traffic. That means the tool itself has a real attack surface: a bug here is not just "wrong output," it can mean a sandbox escape, a sinkhole bypass, or a skill reaching the real internet when it should not be able to.
+Skill Sentinel runs untrusted code inside a Docker sandbox and intercepts its network traffic. That means the tool itself has a real attack surface: a bug here is not just "wrong output," it can mean a sandbox escape, a sinkhole bypass, or a skill reaching the real internet when it should not be able to. See the README's [Threat model](README.md#threat-model) for what this tool is designed to catch, and its [Safety model](README.md#safety-model) for what keeps a scan itself contained.
 
 ## Reporting a vulnerability
 
