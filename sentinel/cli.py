@@ -73,6 +73,8 @@ def _write_line(text: str, stream) -> None:
 
 ANSI_PRIMARY = "\033[38;5;33m"  # defensive blue — the wordmark's and shield's fill
 ANSI_WHITE = "\033[97m"  # tagline/footer text, and the wordmark's 3D outline
+ANSI_MASCOT_NAVY = "\033[38;5;60m"  # mascot helmet/face fill, nearest-256 match to the source art
+ANSI_MASCOT_GOGGLE = "\033[38;5;74m"  # mascot goggle-band accent, same source
 
 # Built from rectangles instead of hand-typed strings — a 47-cell row typed
 # by hand is exactly how the N glyph got silently mis-sized earlier. Bars
@@ -117,17 +119,38 @@ _LETTER_GLYPHS = {
     "L": _rect_glyph(7, [(0, 10, 0, 0), (12, 13, 0, 6)]),
 }
 
-# A helmet-and-face silhouette generated from a per-row fill width rather than
-# hand-typed, so it stays symmetric: a crest, a rounding dome, a brim that
-# flares wider than the dome, then a rounded face/body tapering back in.
-# Sized to roughly match the wordmark's own height, rather than the old
-# 7-row version that left most of that height as blank padding underneath.
-_HELMET_ROW_WIDTHS = [3, 7, 9, 11, 13, 11, 11, 11, 11, 9, 7, 5, 3]
-_HELMET_BOX_WIDTH = 13
-_HELMET_EYE_ROW = 5  # a face row (index into _HELMET_ROW_WIDTHS), just under the brim
-_HELMET_EYE_OFFSET = 2  # cells left/right of center, mirrored so the row stays a palindrome
+# Sampled directly from the reference mockup (a helmeted mascot with a
+# lighter goggle band and white body), not hand-designed: box-downsampled
+# to a 20x20 grid, each cell nearest-color-classified against the mockup's
+# own sampled navy/goggle-blue/white/background tones, then mirrored
+# left-right (the source has natural pixel noise from how it was generated;
+# forcing symmetry cleans that up the same way the letter glyphs above are
+# guaranteed symmetric by construction rather than hand-typed). 'F' = navy
+# helmet/face, 'G' = goggle-band accent, 'W' = white body, ' ' = background.
+_MASCOT_ROWS = [
+    "        FFFF        ",
+    "       FFFFFF       ",
+    "    FFFFFFFFFFFF    ",
+    "    FFFFFFFFFFFF    ",
+    "   FFFFFFFFFFFFFF   ",
+    "   FFFFFFFFFFFFFF   ",
+    "  FFFFFFFFFFFFFFFF  ",
+    "  FFFFFFFFFFFFFFFF  ",
+    " FFFFFFFFFFFFFFFFFF ",
+    "  FFGWWGFGGFGWWGFF  ",
+    "  FGGWF  GG  FWGGF  ",
+    "  FGGWF  GG  FWGGF  ",
+    " FFWGGGGGFFGGGGGWFF ",
+    "FWWWFFFFFFFFFFFFWWWF",
+    "WWWWFFFFGFFGFFFFWWWW",
+    "WWWWFFFFWFFWFFFFWWWW",
+    "WWWWFFFFGFFGFFFFWWWW",
+    "FWWWGFFFFFFFFFFGWWWF",
+    "  FWWWWWWWWWWWWWWF  ",
+    "    FWWWWWWWWWWF    ",
+]
 
-_HERO_GAP = 3  # columns between the wordmark and the helmet
+_HERO_GAP = 3  # columns between the wordmark and the mascot
 
 
 _LETTER_GAP = "   "  # 3 cells: a 1-cell gap gets fully swallowed by the outline pass
@@ -138,66 +161,62 @@ def _block_wordmark(word: str) -> list[str]:
     return [_LETTER_GAP.join(glyph[row] for glyph in glyphs) for row in range(_GLYPH_HEIGHT)]
 
 
-def _helmet_rows() -> list[str]:
-    rows = []
-    center = _HELMET_BOX_WIDTH // 2
-    for i, fill_width in enumerate(_HELMET_ROW_WIDTHS):
-        pad = (_HELMET_BOX_WIDTH - fill_width) // 2
-        cells = [False] * pad + [True] * fill_width + [False] * pad
-        if i == _HELMET_EYE_ROW:
-            cells[center - _HELMET_EYE_OFFSET] = False
-            cells[center + _HELMET_EYE_OFFSET] = False
-        rows.append("".join("█" if cell else " " for cell in cells))
-    return rows
-
-
 def _add_outline(rows: list[str]) -> tuple[list[str], list[str]]:
     """Sticker-style outline: every empty cell touching a filled cell in any
     of the 8 surrounding directions becomes a 1-cell white outline hugging
     the whole silhouette — this is the actual effect GitHub Copilot's CLI
-    banner uses on its wordmark, not a corner-only drop shadow."""
+    banner uses on its wordmark, not a corner-only drop shadow.
+
+    fill_rows preserves each cell's own original character rather than
+    collapsing every filled cell to one glyph, the wordmark only ever uses
+    a single fill character, but the mascot's multiple fill colors (navy/
+    goggle-blue/white) need to survive this pass so _compose_hero_rows can
+    still tell them apart afterward."""
     height = len(rows)
     width = max(len(row) for row in rows)
     padded = [row.ljust(width) for row in rows]
 
     pad_h, pad_w = height + 2, width + 2
-    fill = [[False] * pad_w for _ in range(pad_h)]
+    fill = [[" "] * pad_w for _ in range(pad_h)]
+    filled = [[False] * pad_w for _ in range(pad_h)]
     for r in range(height):
         for c in range(width):
             if padded[r][c] != " ":
-                fill[r + 1][c + 1] = True
+                fill[r + 1][c + 1] = padded[r][c]
+                filled[r + 1][c + 1] = True
 
     outline = [[False] * pad_w for _ in range(pad_h)]
     for r in range(pad_h):
         for c in range(pad_w):
-            if fill[r][c]:
+            if filled[r][c]:
                 continue
             neighbors = (
-                fill[nr][nc]
+                filled[nr][nc]
                 for nr in (r - 1, r, r + 1)
                 for nc in (c - 1, c, c + 1)
                 if (nr, nc) != (r, c) and 0 <= nr < pad_h and 0 <= nc < pad_w
             )
             outline[r][c] = any(neighbors)
 
-    fill_rows = ["".join("█" if cell else " " for cell in row) for row in fill]
+    fill_rows = ["".join(row) for row in fill]
     outline_rows = ["".join("█" if cell else " " for cell in row) for row in outline]
     return fill_rows, outline_rows
 
 
 def _compose_hero_rows() -> list[str]:
-    """Tagged (not yet colored) rows: 'F' fill, 'S' outline, ' ' empty —
-    shared between the wordmark and the helmet. Plain-text composition
-    first, so alignment never has to account for ANSI escape width."""
+    """Tagged (not yet colored) rows, shared between the wordmark and the
+    mascot: '█' wordmark fill, 'F'/'G'/'W' mascot navy/goggle/white fill,
+    'S' outline, ' ' empty. Plain-text composition first, so alignment
+    never has to account for ANSI escape width."""
 
     def _tag(fill_rows: list[str], outline_rows: list[str]) -> list[str]:
         return [
-            "".join("F" if f != " " else ("S" if s != " " else " ") for f, s in zip(fr, oro))
+            "".join(f if f != " " else ("S" if s != " " else " ") for f, s in zip(fr, oro))
             for fr, oro in zip(fill_rows, outline_rows)
         ]
 
     word_tagged = _tag(*_add_outline(_block_wordmark("SENTINEL")))
-    icon_tagged = _tag(*_add_outline(_helmet_rows()))
+    icon_tagged = _tag(*_add_outline(_MASCOT_ROWS))
 
     height = max(len(word_tagged), len(icon_tagged))
     word_width = len(word_tagged[0])
@@ -209,7 +228,13 @@ def _compose_hero_rows() -> list[str]:
 
 
 def _render_tagged_row(tagged_row: str, color: bool) -> str:
-    code_by_tag = {"F": ANSI_PRIMARY, "S": ANSI_WHITE}
+    code_by_tag = {
+        "█": ANSI_PRIMARY,  # wordmark fill
+        "F": ANSI_MASCOT_NAVY,
+        "G": ANSI_MASCOT_GOGGLE,
+        "W": ANSI_WHITE,
+        "S": ANSI_WHITE,  # outline
+    }
     out = []
     for tag in tagged_row:
         if tag == " ":
@@ -292,12 +317,34 @@ def _build_welcome(color: bool) -> str:
     def _styled(text: str, code: str) -> str:
         return f"{code}{text}{ANSI_RESET}" if color else text
 
+    cmd_width = max(len(cmd) for cmd, _ in _QUICKSTART)
+    bullet_lines = [f"● {cmd.ljust(cmd_width)}   {blurb}" for cmd, blurb in _QUICKSTART]
+    help_line = "Run 'skill-sentinel scan --help' for the full list of options."
+    # Same ⌜⌝/⌞⌟ frame the banner above uses, same design language, not a
+    # coincidence, so the two blocks read as one connected piece of output
+    # rather than an unrelated banner glued to plain unstyled help text.
+    content_width = max(len(line) for line in bullet_lines + [help_line, "Get started"])
+
     dot = _styled("●", ANSI_PRIMARY)
-    width = max(len(cmd) for cmd, _ in _QUICKSTART)
-    lines = ["  " + _styled("Get started", ANSI_BOLD + ANSI_WHITE), ""]
+    heading = _styled("Get started", ANSI_BOLD + ANSI_WHITE)
+    divider = _styled("─" * len("Get started"), ANSI_PRIMARY)
+
+    lines = [
+        "⌜" + " " * (content_width + 4) + "⌝",
+        "",
+        "  " + heading,
+        "  " + divider,
+        "",
+    ]
     for cmd, blurb in _QUICKSTART:
-        lines.append(f"  {dot} {cmd.ljust(width)}   {blurb}")
-    lines += ["", "  Run 'skill-sentinel scan --help' for the full list of options."]
+        colored_cmd = _styled(cmd.ljust(cmd_width), ANSI_PRIMARY)
+        lines.append(f"  {dot} {colored_cmd}   {blurb}")
+    lines += [
+        "",
+        "  " + help_line,
+        "",
+        "⌞" + " " * (content_width + 4) + "⌟",
+    ]
     return "\n".join(lines)
 
 

@@ -4,8 +4,6 @@
 [![License: MIT](https://img.shields.io/github/license/handcraftedbygod/Skill-Sentinel)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 
-![Skill Sentinel's CLI banner: a blue 3D block wordmark reading SENTINEL next to a rounded helmet mascot, shown above the tool's Get started quickstart](docs/assets/cli-hero.png)
-
 **A defensive, behavioral scanner for Claude Skills, built to close the detection gap SkillCloak identified in static-only tools.**
 
 A July 2026 academic paper ([arXiv:2607.02357](https://arxiv.org/abs/2607.02357), HKUST) disclosed **SkillCloak**: malicious Claude/Codex skills that hide payloads (self-extracting blobs, obfuscated instructions in `.git/`-style paths) and evade static scanners more than 90% of the time. It made Hacker News and thehackernews.com. Every "skill security" tool available at the time was static-analysis-only, which is exactly what the paper shows is bypassable.

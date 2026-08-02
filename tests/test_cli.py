@@ -1,16 +1,16 @@
-"""One required check: the hand-composed wordmark and helmet stay aligned,
+"""One required check: the hand-composed wordmark and mascot stay aligned,
 the outline layer never overlaps the fill layer, nothing leaks ANSI codes
 when color is off, and a bare invocation is a helpful welcome screen rather
 than an argparse usage error."""
 
 from sentinel.cli import (
+    _MASCOT_ROWS,
     _add_outline,
     _block_wordmark,
     _build_banner,
     _build_footer,
     _build_welcome,
     _compose_hero_rows,
-    _helmet_rows,
     main,
 )
 
@@ -21,10 +21,9 @@ def test_block_wordmark_rows_are_equal_length():
     assert len({len(row) for row in rows}) == 1
 
 
-def test_helmet_rows_are_equal_length_and_symmetric():
-    rows = _helmet_rows()
-    assert len({len(row) for row in rows}) == 1
-    for row in rows:
+def test_mascot_rows_are_equal_length_and_symmetric():
+    assert len({len(row) for row in _MASCOT_ROWS}) == 1
+    for row in _MASCOT_ROWS:
         assert row == row[::-1]
 
 
