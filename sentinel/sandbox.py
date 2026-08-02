@@ -280,6 +280,47 @@ def strace_execve_events(events: list[StraceEvent]) -> list[StraceEvent]:
     return [e for e in events if e.syscall == "execve"]
 
 
+EXECVE_PATH_RE = re.compile(r'^"((?:[^"\\]|\\.)*)"')
+
+
+def _execve_path(raw_args: str) -> str:
+    match = EXECVE_PATH_RE.match(raw_args)
+    return match.group(1) if match else raw_args
+
+
+def strace_notable_execve_events(events: list[StraceEvent], invocation: str) -> list[StraceEvent]:
+    """Successful execve calls beyond the sandbox's own harness and the declared
+    invocation itself, a skill spawning something it wasn't asked to run.
+
+    Two layers are always present and are never skill behavior. docker/entrypoint.sh
+    traces `sh -c "<invocation>"` directly as the container's CMD, so the first
+    successful execve is always that wrapper; the next is always sh forking or
+    exec-replacing into the declared invocation itself. Confirmed against real
+    sandbox runs (not assumed): both showed up in that exact order with no
+    leading noise before the wrapper. Failed execve attempts (result starting
+    "-1") are dropped first, since a plain subprocess.run(["echo", ...]) generates
+    one failed attempt per PATH directory tried before the one that succeeds,
+    which would otherwise quadruple-count a single logical spawn.
+
+    If a candidate's first whitespace token doesn't match what actually got
+    exec'd (an unusual invocation shape, e.g. one with a leading env var
+    assignment), the declared invocation itself can show up as a false-positive
+    finding here rather than being silently swallowed, the safer failure mode
+    for a security tool.
+    """
+    successful = [e for e in strace_execve_events(events) if not e.result.startswith("-1")]
+    if not successful:
+        return []
+    successful = successful[1:]
+
+    first_token = invocation.split()[0] if invocation.strip() else None
+    expected_name = posixpath.basename(first_token) if first_token else None
+    if successful and expected_name and posixpath.basename(_execve_path(successful[0].raw_args)) == expected_name:
+        successful = successful[1:]
+
+    return successful
+
+
 PACKAGE_BOUNDARY_FILES = {"/package.json", "/pyproject.toml"}
 
 

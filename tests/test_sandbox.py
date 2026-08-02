@@ -15,6 +15,7 @@ from sentinel.sandbox import (
     parse_strace_log,
     strace_connect_events,
     strace_execve_events,
+    strace_notable_execve_events,
     strace_notable_openat_events,
 )
 from sentinel.skillmd import BundledFile
@@ -49,6 +50,52 @@ def test_strace_execve_events():
     execs = strace_execve_events(events)
     assert len(execs) == 1
     assert "python3" in execs[0].raw_args
+
+
+def _execve_event(pid: str, path: str, argv: list, result: str = "0") -> StraceEvent:
+    argv_str = ", ".join(f'"{a}"' for a in argv)
+    return StraceEvent(
+        pid=pid,
+        timestamp="00:00:00.000000",
+        syscall="execve",
+        raw_args=f'"{path}", [{argv_str}], 0x7fff0000 /* 14 vars */',
+        result=result,
+    )
+
+
+def test_strace_notable_execve_events_excludes_wrapper_and_declared_invocation():
+    # Shape confirmed against a real sandbox run of examples/malicious/pdf-formatter:
+    # docker/entrypoint.sh always traces `sh -c "<invocation>"` directly as the
+    # container's CMD, so the first execve is always that wrapper and the second
+    # is always sh forking into the declared invocation. Neither is skill
+    # behavior, and a clean run like this one produces no further execve calls.
+    events = [
+        _execve_event("55", "/usr/bin/sh", ["sh", "-c", "python3 scripts/format.py"]),
+        _execve_event("56", "/usr/local/bin/python3", ["python3", "scripts/format.py"]),
+    ]
+    assert strace_notable_execve_events(events, "python3 scripts/format.py") == []
+
+
+def test_strace_notable_execve_events_flags_genuine_spawn_and_dedupes_path_search():
+    # Shape confirmed against a real sandbox run of a throwaway skill that calls
+    # subprocess.run(["echo", ...]): the PATH search for "echo" produces one
+    # failed (ENOENT) execve per directory tried before the one that succeeds,
+    # which must collapse to a single notable event, not five.
+    events = [
+        _execve_event("39", "/usr/bin/sh", ["sh", "-c", "python3 scripts/spawn.py"]),
+        _execve_event("40", "/usr/local/bin/python3", ["python3", "scripts/spawn.py"]),
+        _execve_event("41", "/usr/local/bin/echo", ["echo", "hi"], result="-1 ENOENT (No such file or directory)"),
+        _execve_event("41", "/usr/local/sbin/echo", ["echo", "hi"], result="-1 ENOENT (No such file or directory)"),
+        _execve_event("41", "/usr/sbin/echo", ["echo", "hi"], result="-1 ENOENT (No such file or directory)"),
+        _execve_event("41", "/usr/bin/echo", ["echo", "hi"]),
+    ]
+    notable = strace_notable_execve_events(events, "python3 scripts/spawn.py")
+    assert len(notable) == 1
+    assert notable[0].raw_args.startswith('"/usr/bin/echo"')
+
+
+def test_strace_notable_execve_events_empty_input():
+    assert strace_notable_execve_events([], "python3 scripts/format.py") == []
 
 
 def test_strace_notable_openat_events_excludes_allowlisted():

@@ -16,6 +16,7 @@ from sentinel.findings import Confidence, Finding, Severity
 from sentinel.sandbox import (
     SandboxRunResult,
     strace_connect_events,
+    strace_notable_execve_events,
     strace_notable_openat_events,
 )
 from sentinel.skillmd import SkillMetadata
@@ -46,7 +47,7 @@ STATIC_FINDING_CATEGORIES = (
 # match vs. a probabilistic entropy check vs. LLM judgment), not how bad the
 # finding is if true. MITRE ATT&CK technique IDs are omitted ("") for categories
 # that are scan-infrastructure diagnostics (sandbox_timeout, sandbox_no_trace_data,
-# tls_handshake_failed) or LLM judgment (semantic_review) — no real attacker TTP
+# tls_handshake_failed) or LLM judgment (semantic_review): no real attacker TTP
 # maps cleanly onto either, and a stretched mapping would be less honest than none.
 CATEGORY_METADATA: dict[str, tuple[Confidence, str]] = {
     "base64_blob": (Confidence.MEDIUM, "T1027"),
@@ -60,6 +61,7 @@ CATEGORY_METADATA: dict[str, tuple[Confidence, str]] = {
     "network_request": (Confidence.HIGH, "T1041"),
     "tls_handshake_failed": (Confidence.MEDIUM, ""),
     "out_of_scope_file_access": (Confidence.HIGH, "T1005"),
+    "unexpected_subprocess": (Confidence.HIGH, "T1059"),
     "network_connection": (Confidence.LOW, "T1071"),
     "semantic_review": (Confidence.MEDIUM, ""),
 }
@@ -81,6 +83,15 @@ OPENAT_PATH_RE = re.compile(r'^AT_FDCWD,\s*"([^"]*)"')
 def _openat_path(raw_args: str) -> str:
     match = OPENAT_PATH_RE.match(raw_args)
     return match.group(1) if match else raw_args
+
+
+EXECVE_PATH_RE = re.compile(r'^"((?:[^"\\]|\\.)*)"')
+
+
+def _execve_command_name(raw_args: str) -> str:
+    match = EXECVE_PATH_RE.match(raw_args)
+    path = match.group(1) if match else raw_args
+    return posixpath.basename(path)
 
 
 def _body_looks_like_secret(body_base64: str) -> bool:
@@ -193,6 +204,32 @@ def sandbox_result_findings(result: SandboxRunResult) -> list[Finding]:
                     severity=Severity.HIGH,
                     summary=f"Opened {len(group)} files outside the skill's own directory, all "
                     f"under `{directory}/` (e.g. {sample}, ...)",
+                    source=source,
+                )
+            )
+
+    by_command: dict[str, list] = {}
+    for event in strace_notable_execve_events(result.strace_events, result.invocation):
+        by_command.setdefault(_execve_command_name(event.raw_args), []).append(event)
+
+    for command_name, group in by_command.items():
+        if len(group) < NEAR_DUPLICATE_THRESHOLD:
+            for event in group:
+                findings.append(
+                    Finding(
+                        category="unexpected_subprocess",
+                        severity=Severity.MEDIUM,
+                        summary=f"Spawned a subprocess beyond the invoked command: {command_name}",
+                        detail=event.raw_args,
+                        source=source,
+                    )
+                )
+        else:
+            findings.append(
+                Finding(
+                    category="unexpected_subprocess",
+                    severity=Severity.MEDIUM,
+                    summary=f"Spawned {command_name} {len(group)}x, beyond the invoked command",
                     source=source,
                 )
             )
@@ -311,7 +348,7 @@ def render_markdown(report: Report) -> str:
     lines.append("")
 
     subprocess_findings = [
-        f for f in report.findings if f.category in ("sandbox_timeout", "sandbox_no_trace_data")
+        f for f in report.findings if f.category in ("sandbox_timeout", "sandbox_no_trace_data", "unexpected_subprocess")
     ]
     lines.append("## Subprocess / execution")
     if subprocess_findings:
@@ -448,7 +485,7 @@ def _section_html(title: str, findings: list[Finding], empty_message: str) -> st
 
 def _report_body_html(report: Report) -> str:
     network = [f for f in report.findings if f.category in ("network_request", "network_connection")]
-    subprocess_findings = [f for f in report.findings if f.category in ("sandbox_timeout", "sandbox_no_trace_data")]
+    subprocess_findings = [f for f in report.findings if f.category in ("sandbox_timeout", "sandbox_no_trace_data", "unexpected_subprocess")]
     file_findings = [f for f in report.findings if f.category == "out_of_scope_file_access"]
     static_findings = [f for f in report.findings if f.category in STATIC_FINDING_CATEGORIES]
     semantic_findings = [f for f in report.findings if f.category == "semantic_review"]

