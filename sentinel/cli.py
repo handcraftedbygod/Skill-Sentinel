@@ -117,11 +117,15 @@ _LETTER_GLYPHS = {
     "L": _rect_glyph(7, [(0, 10, 0, 0), (12, 13, 0, 6)]),
 }
 
-# A helmet silhouette generated from a per-row fill width rather than
-# hand-typed, so it stays symmetric: a crest, a rounding dome, then a brim
-# that flares out wider than the dome above it.
-_HELMET_ROW_WIDTHS = [3, 7, 9, 9, 9, 11, 7]
-_HELMET_BOX_WIDTH = 11
+# A helmet-and-face silhouette generated from a per-row fill width rather than
+# hand-typed, so it stays symmetric: a crest, a rounding dome, a brim that
+# flares wider than the dome, then a rounded face/body tapering back in.
+# Sized to roughly match the wordmark's own height, rather than the old
+# 7-row version that left most of that height as blank padding underneath.
+_HELMET_ROW_WIDTHS = [3, 7, 9, 11, 13, 11, 11, 11, 11, 9, 7, 5, 3]
+_HELMET_BOX_WIDTH = 13
+_HELMET_EYE_ROW = 5  # a face row (index into _HELMET_ROW_WIDTHS), just under the brim
+_HELMET_EYE_OFFSET = 2  # cells left/right of center, mirrored so the row stays a palindrome
 
 _HERO_GAP = 3  # columns between the wordmark and the helmet
 
@@ -136,9 +140,14 @@ def _block_wordmark(word: str) -> list[str]:
 
 def _helmet_rows() -> list[str]:
     rows = []
-    for fill_width in _HELMET_ROW_WIDTHS:
+    center = _HELMET_BOX_WIDTH // 2
+    for i, fill_width in enumerate(_HELMET_ROW_WIDTHS):
         pad = (_HELMET_BOX_WIDTH - fill_width) // 2
-        rows.append(" " * pad + "█" * fill_width + " " * pad)
+        cells = [False] * pad + [True] * fill_width + [False] * pad
+        if i == _HELMET_EYE_ROW:
+            cells[center - _HELMET_EYE_OFFSET] = False
+            cells[center + _HELMET_EYE_OFFSET] = False
+        rows.append("".join("█" if cell else " " for cell in cells))
     return rows
 
 
