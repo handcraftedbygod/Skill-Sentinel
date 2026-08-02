@@ -27,12 +27,12 @@ REALISTIC_BASE64_BLOB = "aB3" * 70
 
 
 def test_benign_skill_is_clean():
-    findings = run_heuristics(EXAMPLES_DIR / "benign-skill")
+    findings = run_heuristics(EXAMPLES_DIR / "clean" / "word-counter")
     assert findings == [], f"expected no findings for benign-skill, got: {findings}"
 
 
 def test_malicious_sample_is_flagged():
-    findings = run_heuristics(EXAMPLES_DIR / "malicious-sample")
+    findings = run_heuristics(EXAMPLES_DIR / "malicious" / "pdf-formatter")
     categories = {f.category for f in findings}
 
     assert "base64_blob" in categories, (
@@ -44,6 +44,42 @@ def test_malicious_sample_is_flagged():
     assert "hidden_executable" in categories, (
         f"expected a hidden_executable finding for .cache/.helper, got categories: {categories}"
     )
+
+
+def test_cli_tool_installer_flags_remote_exec_only():
+    findings = run_heuristics(EXAMPLES_DIR / "edge-case" / "cli-tool-installer")
+    categories = {f.category for f in findings}
+
+    assert "skill_md_remote_exec_instruction" in categories, (
+        f"expected a skill_md_remote_exec_instruction finding for the curl | sh installer, "
+        f"got categories: {categories}"
+    )
+    assert "skill_md_exfil_instruction" not in categories, (
+        "a plain curl | sh installer with no fingerprinting/exfil shape should not also "
+        f"trip the exfil check, got categories: {categories}"
+    )
+    assert "skill_md_decode_exec_instruction" not in categories, (
+        f"a curl | sh installer is not a decode-exec pipe, got categories: {categories}"
+    )
+
+
+def test_dev_tooling_script_hidden_executable_is_medium_not_critical():
+    findings = run_heuristics(EXAMPLES_DIR / "edge-case" / "dev-tooling-script")
+    hidden_findings = [f for f in findings if f.category == "hidden_executable"]
+
+    assert len(hidden_findings) == 1, f"expected exactly one hidden_executable finding, got: {findings}"
+    assert hidden_findings[0].severity == Severity.MEDIUM, (
+        f"a .github/scripts/ script is known dev tooling, should downgrade to MEDIUM, "
+        f"got {hidden_findings[0].severity}"
+    )
+
+
+def test_dns_exfil_sample_is_flagged():
+    findings = run_heuristics(EXAMPLES_DIR / "malicious" / "dns-exfil-sample")
+    exfil_findings = [f for f in findings if f.category == "skill_md_exfil_instruction"]
+
+    assert len(exfil_findings) == 1, f"expected one skill_md_exfil_instruction finding, got: {findings}"
+    assert exfil_findings[0].severity == Severity.CRITICAL
 
 
 def test_many_base64_blobs_in_one_file_collapse_to_one_finding(tmp_path):

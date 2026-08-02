@@ -8,8 +8,8 @@ EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
 
 def test_single_skill_repo_finds_its_own_root():
-    found = discover_skill_directories(EXAMPLES_DIR / "benign-skill")
-    assert found == [EXAMPLES_DIR / "benign-skill"]
+    found = discover_skill_directories(EXAMPLES_DIR / "clean" / "word-counter")
+    assert found == [EXAMPLES_DIR / "clean" / "word-counter"]
 
 
 def test_collection_repo_finds_every_subdirectory_skill(tmp_path):

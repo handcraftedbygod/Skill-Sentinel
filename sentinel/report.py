@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sentinel.findings import Finding, Severity
+from sentinel.findings import Confidence, Finding, Severity
 from sentinel.sandbox import (
     SandboxRunResult,
     strace_connect_events,
@@ -41,6 +41,28 @@ STATIC_FINDING_CATEGORIES = (
     "skill_md_remote_exec_instruction",
     "skill_md_decode_exec_instruction",
 )
+
+# Confidence: how certain the detection method itself is (deterministic AST/regex
+# match vs. a probabilistic entropy check vs. LLM judgment), not how bad the
+# finding is if true. MITRE ATT&CK technique IDs are omitted ("") for categories
+# that are scan-infrastructure diagnostics (sandbox_timeout, sandbox_no_trace_data,
+# tls_handshake_failed) or LLM judgment (semantic_review) — no real attacker TTP
+# maps cleanly onto either, and a stretched mapping would be less honest than none.
+CATEGORY_METADATA: dict[str, tuple[Confidence, str]] = {
+    "base64_blob": (Confidence.MEDIUM, "T1027"),
+    "eval_exec_decode": (Confidence.HIGH, "T1140"),
+    "hidden_executable": (Confidence.HIGH, "T1564.001"),
+    "skill_md_decode_exec_instruction": (Confidence.HIGH, "T1140"),
+    "skill_md_remote_exec_instruction": (Confidence.MEDIUM, "T1059"),
+    "skill_md_exfil_instruction": (Confidence.HIGH, "T1041"),
+    "sandbox_timeout": (Confidence.HIGH, ""),
+    "sandbox_no_trace_data": (Confidence.HIGH, ""),
+    "network_request": (Confidence.HIGH, "T1041"),
+    "tls_handshake_failed": (Confidence.MEDIUM, ""),
+    "out_of_scope_file_access": (Confidence.HIGH, "T1005"),
+    "network_connection": (Confidence.LOW, "T1071"),
+    "semantic_review": (Confidence.MEDIUM, ""),
+}
 
 # Below this many near-identical findings (same directory for file opens, same
 # method+host+path for network requests), list each individually — still useful
@@ -240,6 +262,9 @@ def build_report(
     for result in sandbox_results or []:
         all_findings.extend(sandbox_result_findings(result))
 
+    for f in all_findings:
+        f.confidence, f.mitre_technique = CATEGORY_METADATA.get(f.category, (Confidence.MEDIUM, ""))
+
     score, level = compute_risk(all_findings)
 
     return Report(
@@ -258,6 +283,12 @@ def render_json(report: Report) -> str:
     return json.dumps(report.to_dict(), indent=2)
 
 
+def _confidence_suffix(f: Finding) -> str:
+    if f.mitre_technique:
+        return f" _(confidence: {f.confidence.value} · ATT&CK {f.mitre_technique})_"
+    return f" _(confidence: {f.confidence.value})_"
+
+
 def render_markdown(report: Report) -> str:
     lines: list[str] = []
     lines.append(f"# Skill Sentinel report: {report.skill_name or report.skill_path}")
@@ -274,7 +305,7 @@ def render_markdown(report: Report) -> str:
     lines.append("## Network activity")
     if network_findings:
         for f in network_findings:
-            lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}")
+            lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}{_confidence_suffix(f)}")
     else:
         lines.append("- No network activity observed.")
     lines.append("")
@@ -285,7 +316,7 @@ def render_markdown(report: Report) -> str:
     lines.append("## Subprocess / execution")
     if subprocess_findings:
         for f in subprocess_findings:
-            lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}")
+            lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}{_confidence_suffix(f)}")
     else:
         lines.append("- Nothing unusual observed.")
     lines.append("")
@@ -294,7 +325,7 @@ def render_markdown(report: Report) -> str:
     lines.append("## Out-of-scope file access")
     if file_findings:
         for f in file_findings:
-            lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}")
+            lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}{_confidence_suffix(f)}")
     else:
         lines.append("- No file access outside the skill's own directory observed.")
     lines.append("")
@@ -303,7 +334,7 @@ def render_markdown(report: Report) -> str:
     lines.append("## Static red flags")
     if static_findings:
         for f in static_findings:
-            lines.append(f"- **[{f.severity.value.upper()}]** {f.summary} ({f.source})")
+            lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}{_confidence_suffix(f)} ({f.source})")
     else:
         lines.append("- None found.")
     lines.append("")
@@ -312,7 +343,7 @@ def render_markdown(report: Report) -> str:
     lines.append("## Semantic / instruction review")
     if semantic_findings:
         for f in semantic_findings:
-            lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}")
+            lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}{_confidence_suffix(f)}")
             if f.detail:
                 lines.append(f'  > "{f.detail}"')
     elif report.semantic_review_ran:
@@ -330,7 +361,7 @@ def render_markdown(report: Report) -> str:
     if other_findings:
         lines.append("## Other findings")
         for f in other_findings:
-            lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}")
+            lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}{_confidence_suffix(f)}")
         lines.append("")
 
     return "\n".join(lines)
@@ -399,10 +430,14 @@ def _finding_html(f: Finding) -> str:
     color = SEVERITY_COLOR[f.severity.value]
     detail = f'<div class="detail">{html.escape(f.detail)}</div>' if f.detail else ""
     source = f'<div class="source">{html.escape(f.source)}</div>' if f.source else ""
+    confidence_text = f"confidence: {html.escape(f.confidence.value)}"
+    if f.mitre_technique:
+        confidence_text += f" &middot; ATT&amp;CK {html.escape(f.mitre_technique)}"
+    confidence = f'<div class="source">{confidence_text}</div>'
     return (
         f'<div class="finding" style="border-left-color:{color}">'
         f'<span class="badge" style="background:{color}">{f.severity.value.upper()}</span>'
-        f"{html.escape(f.summary)}{detail}{source}</div>"
+        f"{html.escape(f.summary)}{detail}{source}{confidence}</div>"
     )
 
 

@@ -25,6 +25,14 @@ _SEVERITY_RANK = {
 }
 
 
+class Confidence(Enum):
+    """How certain the detection is, independent of severity (how bad if true)."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 @dataclass
 class Finding:
     """A single observation, static or behavioral, feeding into the report."""
@@ -32,6 +40,8 @@ class Finding:
     category: str
     severity: Severity
     summary: str
+    confidence: Confidence = Confidence.MEDIUM
+    mitre_technique: str = ""
     detail: str = ""
     source: str = ""
     extra: dict = field(default_factory=dict)
@@ -41,6 +51,8 @@ class Finding:
             "category": self.category,
             "severity": self.severity.value,
             "summary": self.summary,
+            "confidence": self.confidence.value,
+            "mitre_technique": self.mitre_technique,
             "detail": self.detail,
             "source": self.source,
             "extra": self.extra,
