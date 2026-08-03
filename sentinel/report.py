@@ -403,7 +403,7 @@ def _confidence_suffix(f: Finding) -> str:
 
 def render_markdown(report: Report) -> str:
     lines: list[str] = []
-    lines.append(f"# Skill Sentinel report: {report.skill_name or report.skill_path}")
+    lines.append(f"# SkillTrace report: {report.skill_name or report.skill_path}")
     lines.append("")
     if report.skill_description:
         lines.append(f"> {report.skill_description}")
@@ -491,7 +491,7 @@ def render_json_multi(reports: list[Report]) -> str:
 def render_markdown_multi(reports: list[Report]) -> str:
     if len(reports) == 1:
         return render_markdown(reports[0])
-    parts = [f"# Skill Sentinel: {len(reports)} skills found in this repository"]
+    parts = [f"# SkillTrace: {len(reports)} skills found in this repository"]
     parts.extend(render_markdown(r) for r in reports)
     return "\n\n---\n\n".join(parts)
 
@@ -609,7 +609,7 @@ def render_html_multi(reports: list[Report]) -> str:
         title = r.skill_name or r.skill_path
         body = f"<h1>{html.escape(title)}</h1>{_report_body_html(r)}"
     else:
-        title = f"Skill Sentinel: {len(reports)} skills"
+        title = f"SkillTrace: {len(reports)} skills"
         rows = "".join(
             f"<tr><td>{html.escape(r.skill_name or r.skill_path)}</td>"
             f'<td><span class="badge" style="background:{SEVERITY_COLOR[r.risk_level.value]}">'

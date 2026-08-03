@@ -1,4 +1,4 @@
-# Skill Sentinel sandbox image.
+# SkillTrace sandbox image.
 #
 # Runs a candidate skill under strace, with all DNS lookups sinkholed to a
 # local mitmproxy instance (via dnsmasq) so HTTPS traffic decrypts for the

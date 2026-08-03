@@ -1,4 +1,4 @@
-# Skill Sentinel: design notes
+# SkillTrace: design notes
 
 This document goes one level deeper than the README: not what the tool does, but why it's built this way, what tradeoffs were made deliberately, and what's still genuinely unproven. It's written for someone deciding whether to trust, extend, or critique this project, not as a sales pitch. See the README's [Related work](../README.md#related-work) for how this compares to prior art, this document assumes you've read that.
 
@@ -16,7 +16,7 @@ See the README's [Threat model](../README.md#threat-model) for the user-facing v
 
 ### Why `strace`, not eBPF
 
-The original research prototype this project takes inspiration from (referred to in the README as SkillDetonate) uses kernel-level taint tracking. `strace -f -e trace=execve,connect,openat` captures the same three signal classes, subprocess, network, file, at a fraction of the engineering cost: no custom kernel module, no BPF verifier compatibility matrix across host kernels, works identically on any Linux the Docker image runs on. The tradeoff is real, `strace`'s ptrace-based interception is itself a much easier thing for a sufficiently informed skill to detect than an eBPF probe would be, but for the threat model in section 2 (an adversary who doesn't know it's specifically Skill Sentinel doing the scanning), that tradeoff is the right one for a project at this stage.
+The original research prototype this project takes inspiration from (referred to in the README as SkillDetonate) uses kernel-level taint tracking. `strace -f -e trace=execve,connect,openat` captures the same three signal classes, subprocess, network, file, at a fraction of the engineering cost: no custom kernel module, no BPF verifier compatibility matrix across host kernels, works identically on any Linux the Docker image runs on. The tradeoff is real, `strace`'s ptrace-based interception is itself a much easier thing for a sufficiently informed skill to detect than an eBPF probe would be, but for the threat model in section 2 (an adversary who doesn't know it's specifically SkillTrace doing the scanning), that tradeoff is the right one for a project at this stage.
 
 ### Why the Docker CLI, not the docker-py SDK
 

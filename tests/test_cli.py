@@ -16,7 +16,7 @@ from sentinel.cli import (
 
 
 def test_block_wordmark_rows_are_equal_length():
-    rows = _block_wordmark("SENTINEL")
+    rows = _block_wordmark("SKILLTRACE")
     assert len(rows) == 14
     assert len({len(row) for row in rows}) == 1
 
@@ -28,7 +28,7 @@ def test_mascot_rows_are_equal_length_and_symmetric():
 
 
 def test_outline_never_overlaps_fill():
-    fill_rows, outline_rows = _add_outline(_block_wordmark("SENTINEL"))
+    fill_rows, outline_rows = _add_outline(_block_wordmark("SKILLTRACE"))
     assert len(fill_rows) == len(outline_rows) == 16
     for fill_row, outline_row in zip(fill_rows, outline_rows):
         assert len(fill_row) == len(outline_row)
@@ -70,13 +70,13 @@ def test_banner_color_has_ansi_codes():
 def test_footer_plain_has_no_ansi_codes():
     footer = _build_footer(color=False)
     assert "\033[" not in footer
-    assert "skill-sentinel v" in footer
+    assert "skilltrace v" in footer
 
 
 def test_welcome_plain_has_no_ansi_codes():
     welcome = _build_welcome(color=False)
     assert "\033[" not in welcome
-    assert "skill-sentinel scan ./my-skill" in welcome
+    assert "skilltrace scan ./my-skill" in welcome
 
 
 def test_bare_invocation_shows_welcome_and_exits_zero(capsys):
@@ -84,4 +84,4 @@ def test_bare_invocation_shows_welcome_and_exits_zero(capsys):
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "Get started" in out
-    assert "skill-sentinel scan ./my-skill" in out
+    assert "skilltrace scan ./my-skill" in out

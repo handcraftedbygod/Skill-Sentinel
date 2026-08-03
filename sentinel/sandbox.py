@@ -24,7 +24,7 @@ from sentinel.allowlist import is_benign_path
 from sentinel.skillmd import BundledFile, extract_usage_examples
 
 DOCKER_DIR = Path(__file__).resolve().parent.parent / "docker"
-IMAGE_TAG = "skill-sentinel-sandbox"
+IMAGE_TAG = "skilltrace-sandbox"
 
 INTERPRETER_BY_SUFFIX = {
     ".py": "python3",
@@ -50,7 +50,7 @@ class SandboxTimeoutError(SentinelError):
 def ensure_docker_available() -> None:
     if shutil.which("docker") is None:
         raise DockerUnavailableError(
-            "The `docker` command was not found on PATH. Skill Sentinel's sandbox "
+            "The `docker` command was not found on PATH. SkillTrace's sandbox "
             "requires Docker — install it from https://docs.docker.com/get-docker/ "
             "and make sure `docker` is on your PATH."
         )

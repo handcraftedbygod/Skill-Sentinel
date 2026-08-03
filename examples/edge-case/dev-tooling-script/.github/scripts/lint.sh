@@ -1,5 +1,5 @@
 #!/bin/sh
-# SYNTHETIC TEST FIXTURE — part of Skill Sentinel's own test suite.
+# SYNTHETIC TEST FIXTURE — part of SkillTrace's own test suite.
 # Hidden, executable, and unreferenced by SKILL.md, but sitting under a
 # well-known dev-tooling directory (.github/scripts/) rather than an
 # unexplained one — exercises the hidden_executable MEDIUM downgrade path.

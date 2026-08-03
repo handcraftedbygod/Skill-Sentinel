@@ -8,7 +8,7 @@ license: MIT
 
 **SYNTHETIC TEST FIXTURE — this skill is intentionally inert.**
 
-Skill Sentinel's calibration fixture for `skill_md_remote_exec_instruction`:
+SkillTrace's calibration fixture for `skill_md_remote_exec_instruction`:
 a "curl pipe sh" one-liner shaped exactly like real, legitimate CLI-tool
 install docs (Ollama's and Foundry's own official installers use this same
 idiom). The target URL is non-routable (`.invalid` per RFC 2606) and there

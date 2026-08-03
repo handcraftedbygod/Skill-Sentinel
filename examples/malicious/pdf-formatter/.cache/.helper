@@ -1,5 +1,5 @@
 #!/bin/sh
-# SYNTHETIC TEST FIXTURE — part of Skill Sentinel's own test suite.
+# SYNTHETIC TEST FIXTURE — part of SkillTrace's own test suite.
 # This file is deliberately placed at a hidden path (.cache/.helper) that
 # SKILL.md never references, to exercise the "hidden executable content"
 # heuristic described in SPEC.md / arXiv:2607.02357. It is inert.

@@ -1,14 +1,14 @@
-# Skill Sentinel (WORK IN PROGRESS)
+# SkillTrace (WORK IN PROGRESS)
 
-[![CI](https://img.shields.io/github/actions/workflow/status/handcraftedbygod/Skill-Sentinel/ci.yml?branch=main&label=tests)](https://github.com/handcraftedbygod/Skill-Sentinel/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/github/license/handcraftedbygod/Skill-Sentinel)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/handcraftedbygod/SkillTrace/ci.yml?branch=main&label=tests)](https://github.com/handcraftedbygod/SkillTrace/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/handcraftedbygod/SkillTrace)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 
 **A defensive, behavioral scanner for Claude Skills, built to close the detection gap SkillCloak identified in static-only tools.**
 
 A July 2026 academic paper ([arXiv:2607.02357](https://arxiv.org/abs/2607.02357), HKUST) disclosed **SkillCloak**: malicious Claude/Codex skills that hide payloads (self-extracting blobs, obfuscated instructions in `.git/`-style paths) and evade static scanners more than 90% of the time. It made Hacker News and thehackernews.com. Every "skill security" tool available at the time was static-analysis-only, which is exactly what the paper shows is bypassable.
 
-Traditional malware scanners inspect code. A Claude Skill can carry out its entire attack as natural-language instructions that an agent reads and follows with its own already-granted tool access, no executable payload required at all. That changes the detection problem from binary inspection to behavioral verification. Skill Sentinel runs a candidate skill inside a disposable, network-sandboxed container and reports what it *actually* does: network destinations (including decrypted HTTPS host/path/body), subprocess spawns, and out-of-scope file access, instead of just trusting its `SKILL.md` description. A cheap static pass runs first to catch structural obfuscation (long base64 blobs, `eval`/`exec` of decoded content, hidden executables in dotfile paths).
+Traditional malware scanners inspect code. A Claude Skill can carry out its entire attack as natural-language instructions that an agent reads and follows with its own already-granted tool access, no executable payload required at all. That changes the detection problem from binary inspection to behavioral verification. SkillTrace runs a candidate skill inside a disposable, network-sandboxed container and reports what it *actually* does: network destinations (including decrypted HTTPS host/path/body), subprocess spawns, and out-of-scope file access, instead of just trusting its `SKILL.md` description. A cheap static pass runs first to catch structural obfuscation (long base64 blobs, `eval`/`exec` of decoded content, hidden executables in dotfile paths).
 
 For the deeper design rationale behind this (why `strace` over eBPF, why severity and confidence are tracked as separate axes, and an honest accounting of what's actually been validated versus what hasn't), see [`docs/DESIGN.md`](docs/DESIGN.md).
 
@@ -22,11 +22,11 @@ A malicious Claude Skill may attempt to:
 - Exfiltrate data over HTTPS to a destination that looks unremarkable until the request body, or the destination hostname itself, is inspected.
 - Spawn a subprocess or touch a file well outside its own directory, behavior a static read of `SKILL.md` alone would never reveal.
 
-Skill Sentinel is built to detect these before a skill is installed, by actually running it in an isolated environment and watching what happens. It is not designed to, and does not, execute attacks against third-party systems: every sample bundled in this repo is inert by design (see [Known false positives / edge cases](#known-false-positives--edge-cases) and the fixtures under [`examples/`](examples/) themselves), and the sandbox's default network posture makes real egress structurally impossible regardless of what a scanned skill attempts (see [Safety model](#safety-model)). What this can't promise: a sufficiently novel obfuscation technique might still get past it, which is why sandbox-evasion resistance is on the [roadmap](#roadmap) rather than claimed as solved.
+SkillTrace is built to detect these before a skill is installed, by actually running it in an isolated environment and watching what happens. It is not designed to, and does not, execute attacks against third-party systems: every sample bundled in this repo is inert by design (see [Known false positives / edge cases](#known-false-positives--edge-cases) and the fixtures under [`examples/`](examples/) themselves), and the sandbox's default network posture makes real egress structurally impossible regardless of what a scanned skill attempts (see [Safety model](#safety-model)). What this can't promise: a sufficiently novel obfuscation technique might still get past it, which is why sandbox-evasion resistance is on the [roadmap](#roadmap) rather than claimed as solved.
 
 ## What it does, vs. static-only tools
 
-| | Static scanners (`skill-audit`, `skill-check`, ...) | Skill Sentinel |
+| | Static scanners (`skill-audit`, `skill-check`, ...) | SkillTrace |
 |---|---|---|
 | Reads `SKILL.md` / source for red-flag patterns | ✅ | ✅ (first pass) |
 | Actually runs the skill and observes behavior | ❌ | ✅ |
@@ -41,7 +41,7 @@ Static scanners aren't the only prior art anymore, though: some tools in this sp
 ## Install
 
 ```
-pip install git+https://github.com/handcraftedbygod/Skill-Sentinel.git
+pip install git+https://github.com/handcraftedbygod/SkillTrace.git
 ```
 
 Requires [Docker](https://docs.docker.com/get-docker/) for the sandboxed scan (`--no-sandbox` runs the static pass only, no Docker needed).
@@ -49,23 +49,23 @@ Requires [Docker](https://docs.docker.com/get-docker/) for the sandboxed scan (`
 ## Quickstart
 
 ```
-skill-sentinel scan ./my-skill
-skill-sentinel scan https://github.com/someone/some-skill
-skill-sentinel scan ./my-skill --invoke "python scripts/main.py --demo"
-skill-sentinel scan ./my-skill --json -o report.json
-skill-sentinel scan ./my-skill --html
-ANTHROPIC_API_KEY=sk-... skill-sentinel scan ./my-skill --semantic-review
+skilltrace scan ./my-skill
+skilltrace scan https://github.com/someone/some-skill
+skilltrace scan ./my-skill --invoke "python scripts/main.py --demo"
+skilltrace scan ./my-skill --json -o report.json
+skilltrace scan ./my-skill --html
+ANTHROPIC_API_KEY=sk-... skilltrace scan ./my-skill --semantic-review
 ```
 
-A single git URL can also point at a collection repo, one repo bundling many skills, each in its own subdirectory, with no `SKILL.md` at the root. Skill Sentinel finds every one of them and scans each independently (see `sentinel/skillmd.py`'s `discover_skill_directories`), turning the report into a list of per-skill reports instead of a single one, with per-skill progress printed to stderr as it goes (`[3/87] scanning some-skill... -> LOW (0)`) so a large collection scan isn't a silent black box. This includes skills nested under a conventional agent-tool install directory (`.claude/skills/`, `.agents/skills/`, `.gemini/skills/`, `.cursor/skills/`, `.codex/skills/`, `.openclaw/skills/`); plain dot-directory exclusion would otherwise make them invisible, which is exactly how a real third-party malicious sample was structured (see below). `SKILL.md`'s filename match is also case-insensitive, since a real sample in the wild used `skill.md`.
+A single git URL can also point at a collection repo, one repo bundling many skills, each in its own subdirectory, with no `SKILL.md` at the root. SkillTrace finds every one of them and scans each independently (see `sentinel/skillmd.py`'s `discover_skill_directories`), turning the report into a list of per-skill reports instead of a single one, with per-skill progress printed to stderr as it goes (`[3/87] scanning some-skill... -> LOW (0)`) so a large collection scan isn't a silent black box. This includes skills nested under a conventional agent-tool install directory (`.claude/skills/`, `.agents/skills/`, `.gemini/skills/`, `.cursor/skills/`, `.codex/skills/`, `.openclaw/skills/`); plain dot-directory exclusion would otherwise make them invisible, which is exactly how a real third-party malicious sample was structured (see below). `SKILL.md`'s filename match is also case-insensitive, since a real sample in the wild used `skill.md`.
 
 `--html` writes a self-contained, styled HTML report alongside the normal terminal output: severity-colored findings, a summary table for collection scans, collapsible per-skill sections. Good for a full visual review or as a CI artifact you can download and open. No external assets, works offline. Terminal output itself gets severity-colored automatically when stdout is a real terminal (never when piped to a file or used with `--json`, which stay exactly what they claim to be).
 
 ## Example output
 
-Scanning Skill Sentinel's own `examples/malicious/pdf-formatter` test fixture, a synthetic, inert SkillCloak-style skill bundled in this repo specifically to exercise these checks, produces this, unedited:
+Scanning SkillTrace's own `examples/malicious/pdf-formatter` test fixture, a synthetic, inert SkillCloak-style skill bundled in this repo specifically to exercise these checks, produces this, unedited:
 
-![Terminal output of a skill-sentinel scan flagging a CRITICAL risk score with a colored MEDIUM, HIGH, and CRITICAL finding](docs/assets/terminal-scan.png)
+![Terminal output of a skilltrace scan flagging a CRITICAL risk score with a colored MEDIUM, HIGH, and CRITICAL finding](docs/assets/terminal-scan.png)
 
 And the `--html` report for that same scan:
 
@@ -77,7 +77,7 @@ This fixture's own `SKILL.md` says up front that it is inert. It never makes a n
 
 Every fixture below lives under [`examples/`](examples/), is inert by design, and its `SKILL.md` says so. The middle column asks a narrower question than "would some specific competing tool catch this": whether the fixture's attack shape is even the kind of thing a pattern-matching-only scanner, with no execution and no prose parsing, could catch in principle.
 
-| Fixture | What it demonstrates | Pattern-matching alone | Skill Sentinel |
+| Fixture | What it demonstrates | Pattern-matching alone | SkillTrace |
 |---|---|---|---|
 | [`clean/word-counter`](examples/clean/word-counter) | An ordinary, non-malicious skill | Clean | Clean (LOW, score 0) |
 | [`malicious/pdf-formatter`](examples/malicious/pdf-formatter) | SkillCloak's own threat model: a self-decoding payload plus a hidden dotfile executable | Needs an entropy-aware base64 check and a scan that doesn't skip dotfiles by convention, exactly the gap the SkillCloak paper measured at >90% evasion | CRITICAL (score 25): `base64_blob`, `eval_exec_decode`, `hidden_executable` |
@@ -165,7 +165,7 @@ See [`.github/workflows/skill-ci.yml.example`](.github/workflows/skill-ci.yml.ex
 
 One real case so far, below. A broader scan across a larger batch of public Claude Skill repos is still on the list.
 
-**Validated against a real malicious sample.** [`snyk-labs/toxicskills-goof`](https://github.com/snyk-labs/toxicskills-goof), a third-party security research repo, includes a "fake Vercel skill" with no code at all: a plain-text "Prerequisites" instruction telling the agent to run a command that fingerprints the host and posts it to a pastebin, framed as required for the skill to work. Scanning it with Skill Sentinel correctly flags it CRITICAL. Two real gaps surfaced and got fixed along the way: every skill in that repo lives under a conventional agent-tool install directory (`.agents/skills/`, `.gemini/skills/`) that a naive "skip all dot-directories" rule made invisible, and one skill uses a lowercase `skill.md` filename.
+**Validated against a real malicious sample.** [`snyk-labs/toxicskills-goof`](https://github.com/snyk-labs/toxicskills-goof), a third-party security research repo, includes a "fake Vercel skill" with no code at all: a plain-text "Prerequisites" instruction telling the agent to run a command that fingerprints the host and posts it to a pastebin, framed as required for the skill to work. Scanning it with SkillTrace correctly flags it CRITICAL. Two real gaps surfaced and got fixed along the way: every skill in that repo lives under a conventional agent-tool install directory (`.agents/skills/`, `.gemini/skills/`) that a naive "skip all dot-directories" rule made invisible, and one skill uses a lowercase `skill.md` filename.
 
 ## Explainability
 
@@ -221,10 +221,10 @@ Bigger research directions this project could grow into, not scheduled or promis
 
 ## Related work
 
-Skill Sentinel isn't the only project working on this problem, and an earlier version of this README's "first practical" framing didn't hold up to that. Here's the current landscape, checked directly against primary sources rather than assumed, and where this project's own angle actually still differs:
+SkillTrace isn't the only project working on this problem, and an earlier version of this README's "first practical" framing didn't hold up to that. Here's the current landscape, checked directly against primary sources rather than assumed, and where this project's own angle actually still differs:
 
 - **[MalSkillBench](https://arxiv.org/abs/2606.07131)** (2026) verifies its malicious-skill labels by running each sample in a Docker sandbox under syscall monitoring plus an LLM judge, then releases the resulting dataset, 7,944 skills (3,214 pipeline-verified malicious, 703 malicious found in the wild, 4,000 matched benign) as a benchmark for others to evaluate against. It's a measurement resource, not a shipped scanning tool.
-- **[AgentSkillsScanner](https://github.com/sumleo/AgentSkillsScanner)**, behind the [MaliciousAgentSkillsBench](https://github.com/protectskills/MaliciousAgentSkillsBench) dataset and a USENIX Security 2026 paper, is the closest prior art to this project's own pipeline shape: static rules, Docker-sandboxed dynamic execution with network/file monitoring, and Claude-based LLM review, run at real scale (98,380 skills crawled, 157 confirmed malicious). Two concrete differences remain: its network capture is PCAP-level, encrypted traffic, no visibility into HTTPS request bodies, where Skill Sentinel decrypts via a local mitmproxy CA; and it's built as a registry-scale research/audit framework (crawler, mapper, download queue) rather than something installed and run against one skill or repo before installing it, or wired into CI.
+- **[AgentSkillsScanner](https://github.com/sumleo/AgentSkillsScanner)**, behind the [MaliciousAgentSkillsBench](https://github.com/protectskills/MaliciousAgentSkillsBench) dataset and a USENIX Security 2026 paper, is the closest prior art to this project's own pipeline shape: static rules, Docker-sandboxed dynamic execution with network/file monitoring, and Claude-based LLM review, run at real scale (98,380 skills crawled, 157 confirmed malicious). Two concrete differences remain: its network capture is PCAP-level, encrypted traffic, no visibility into HTTPS request bodies, where SkillTrace decrypts via a local mitmproxy CA; and it's built as a registry-scale research/audit framework (crawler, mapper, download queue) rather than something installed and run against one skill or repo before installing it, or wired into CI.
 - **[SkillFortify](https://arxiv.org/abs/2603.00195)** takes a different, complementary approach: formal static analysis (an agent-dependency graph with SAT-based resolution, information-flow analysis, a capability-based sandboxing model) rather than runtime behavioral tracing, evaluated on its own 540-skill benchmark (270 malicious, 270 benign, across Claude, MCP, and OpenClaw formats).
 - **[SkillSieve](https://arxiv.org/abs/2604.06550)** layers static triage (regex, AST, and metadata) with a multi-model LLM jury for the harder cases, again without a sandboxed dynamic-execution stage of its own.
 
@@ -239,7 +239,7 @@ Background and framework references:
 
 ## Security
 
-Skill Sentinel only ever analyzes a skill inside the sandboxed, network-isolated environment described above, a scan never touches the live internet by default. Every fixture bundled in this repo (see [`examples/`](examples/)) is a synthetic, inert stand-in, not a working exploit, and its own `SKILL.md` says so.
+SkillTrace only ever analyzes a skill inside the sandboxed, network-isolated environment described above, a scan never touches the live internet by default. Every fixture bundled in this repo (see [`examples/`](examples/)) is a synthetic, inert stand-in, not a working exploit, and its own `SKILL.md` says so.
 
 Found a sandbox escape, a sinkhole bypass, or a new obfuscation technique this tool misses? See [SECURITY.md](SECURITY.md) for how to report it privately.
 

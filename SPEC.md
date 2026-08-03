@@ -1,4 +1,4 @@
-# Skill Sentinel — a behavioral scanner for Claude Skills
+# SkillTrace — a behavioral scanner for Claude Skills
 
 ## Context
 
@@ -20,16 +20,16 @@ Skipped vs. the full SkillDetonate paper, with upgrade paths noted so the simpli
 
 ## Launch plan (this is what actually drives adoption, not the tool alone)
 
-Before/at launch, run Skill Sentinel against a batch of ~20-50 real public skill repos (pull candidates from the categories this research already surveyed — offensive-security packs, large aggregator collections, etc.) and publish whatever it genuinely finds as the launch content itself: a "we scanned N popular Claude Skills for SkillCloak-style behavior, here's what turned up" write-up, linked from the README and posted to HN/r/ClaudeAI. Security tools gain traction from real findings, not from the existence of the tool — the tool is the receipt, the findings are the story. If a scan turns up nothing alarming, that's still a legitimate launch angle ("here's proof the ecosystem is mostly clean, and here's how you'd know if it weren't") — do not manufacture findings.
+Before/at launch, run SkillTrace against a batch of ~20-50 real public skill repos (pull candidates from the categories this research already surveyed — offensive-security packs, large aggregator collections, etc.) and publish whatever it genuinely finds as the launch content itself: a "we scanned N popular Claude Skills for SkillCloak-style behavior, here's what turned up" write-up, linked from the README and posted to HN/r/ClaudeAI. Security tools gain traction from real findings, not from the existence of the tool — the tool is the receipt, the findings are the story. If a scan turns up nothing alarming, that's still a legitimate launch angle ("here's proof the ecosystem is mostly clean, and here's how you'd know if it weren't") — do not manufacture findings.
 
 Repo stays **private** through the build. Flip to public only at launch, once working v1 + README + the launch-scan findings write-up are all ready together — a coordinated flip-to-public plus the HN/Reddit post lands harder than early, unfinished visibility.
 
 ## Architecture
 
 ```
-skill-sentinel/
+skilltrace/
   README.md                        — hook: "the first practical runtime auditor against SkillCloak-style attacks", install, quickstart, links the arXiv paper
-  pyproject.toml                   — pip/pipx-installable, entry point `skill-sentinel`
+  pyproject.toml                   — pip/pipx-installable, entry point `skilltrace`
   sentinel/
     cli.py                         — argparse: scan <path|git-url> [--invoke CMD] [--allow-network] [--json]
     skillmd.py                     — parse SKILL.md frontmatter, discover bundled scripts/resources
@@ -71,7 +71,7 @@ skill-sentinel/
 ## Verification
 
 - `tests/test_heuristics.py` passes: malicious fixture flagged, benign fixture clean (runs without Docker — fast feedback loop).
-- Manual end-to-end: `skill-sentinel scan examples/malicious-sample` produces a report showing the self-decoding payload's `execve`/`connect` calls, the decrypted destination host/path from mitmproxy, and a non-zero risk score; `skill-sentinel scan examples/benign-skill` produces a clean report.
+- Manual end-to-end: `skilltrace scan examples/malicious-sample` produces a report showing the self-decoding payload's `execve`/`connect` calls, the decrypted destination host/path from mitmproxy, and a non-zero risk score; `skilltrace scan examples/benign-skill` produces a clean report.
 - Confirm HTTPS traffic actually decrypts inside the sandbox (test against a known https:// request) before relying on it for the launch scan.
 - Confirm the tool fails with a clear, actionable error (not a stack trace) when Docker isn't installed or the daemon isn't running.
 - Confirm `--json` output is valid JSON suitable for piping into the example GitHub Action.

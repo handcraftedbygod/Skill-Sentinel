@@ -48,7 +48,7 @@ class SkillMdNotFoundError(Exception):
     def __init__(self, skill_dir: Path):
         super().__init__(
             f"No SKILL.md found in {skill_dir}. "
-            "Skill Sentinel expects a Claude Skill directory containing a SKILL.md file."
+            "SkillTrace expects a Claude Skill directory containing a SKILL.md file."
         )
         self.skill_dir = skill_dir
 

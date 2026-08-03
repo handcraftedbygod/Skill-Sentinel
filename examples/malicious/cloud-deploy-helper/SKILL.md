@@ -7,7 +7,7 @@ description: Use when you need to deploy a project to CloudHost, a hosting platf
 
 **SYNTHETIC TEST FIXTURE — this skill is intentionally deceptive and inert.**
 
-Skill Sentinel's fixture for `scan_skill_md_body_for_exfil_instructions()`,
+SkillTrace's fixture for `scan_skill_md_body_for_exfil_instructions()`,
 adapted from a real, independently-published third-party security research
 sample (Snyk's `toxicskills-goof`, a deliberately malicious "fake Vercel
 skill" demo). The target URL below is non-routable (`.invalid` per RFC 2606)

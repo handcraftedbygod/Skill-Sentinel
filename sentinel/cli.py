@@ -1,4 +1,4 @@
-"""skill-sentinel CLI: scan <path|git-url> [--invoke CMD] [--allow-network] [--json]"""
+"""skilltrace CLI: scan <path|git-url> [--invoke CMD] [--allow-network] [--json]"""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ from sentinel.skillmd import (
 
 FAIL_THRESHOLD_CHOICES = ["low", "medium", "high", "critical"]
 
-DEFAULT_HTML_REPORT = "skill-sentinel-report.html"
+DEFAULT_HTML_REPORT = "skilltrace-report.html"
 
 # Terminal-only polish: color the severity tags render_markdown() already
 # produces rather than build a separate colored-text renderer. Applied only
@@ -97,23 +97,71 @@ def _rect_glyph(width: int, rects: list[tuple[int, int, int, int]]) -> list[str]
     return ["".join("█" if cell else " " for cell in row) for row in grid]
 
 
-def _n_glyph() -> list[str]:
-    # Side verticals plus a staircase diagonal, computed rather than typed
-    # so it's guaranteed symmetric and every row is the same width.
-    width = 9
+def _k_glyph() -> list[str]:
+    # Left stem plus two diagonals meeting at mid-height, same computed
+    # approach as the diagonal below rather than hand-typed rows.
+    width = 7
+    grid = [[False] * width for _ in range(_GLYPH_HEIGHT)]
+    mid = (_GLYPH_HEIGHT - 1) // 2
+    for r in range(_GLYPH_HEIGHT):
+        grid[r][0] = True
+        grid[r][1] = True
+        if r <= mid:
+            diag_col = round(2 + (mid - r) * (width - 3) / mid)
+        else:
+            diag_col = round(2 + (r - mid) * (width - 3) / (_GLYPH_HEIGHT - 1 - mid))
+        grid[r][diag_col] = True
+    return ["".join("█" if cell else " " for cell in row) for row in grid]
+
+
+def _r_glyph() -> list[str]:
+    # Stem, closed top bowl, and a computed diagonal leg (same technique as
+    # the K's lower diagonal) instead of a hand-typed row for the leg.
+    width = 7
+    bowl_bottom = 7
     grid = [[False] * width for _ in range(_GLYPH_HEIGHT)]
     for r in range(_GLYPH_HEIGHT):
         grid[r][0] = True
+        grid[r][1] = True
+    for c in range(width):
+        grid[0][c] = True
+        grid[1][c] = True
+        grid[bowl_bottom - 1][c] = True
+        grid[bowl_bottom][c] = True
+    for r in range(bowl_bottom):
+        grid[r][width - 2] = True
         grid[r][width - 1] = True
-        diag_col = 1 + round(r * (width - 3) / (_GLYPH_HEIGHT - 1))
+    for r in range(bowl_bottom, _GLYPH_HEIGHT):
+        diag_col = round(2 + (r - bowl_bottom) * (width - 3) / (_GLYPH_HEIGHT - 1 - bowl_bottom))
         grid[r][diag_col] = True
+    return ["".join("█" if cell else " " for cell in row) for row in grid]
+
+
+def _a_glyph() -> list[str]:
+    # Two computed diagonal legs meeting at an apex, plus a crossbar sized
+    # to the legs' position at that row rather than a fixed-width guess.
+    width = 7
+    apex_col = (width - 1) // 2
+    grid = [[False] * width for _ in range(_GLYPH_HEIGHT)]
+    for r in range(_GLYPH_HEIGHT):
+        spread = round(r * apex_col / (_GLYPH_HEIGHT - 1))
+        grid[r][apex_col - spread] = True
+        grid[r][apex_col + spread] = True
+    crossbar_row = _GLYPH_HEIGHT // 2
+    crossbar_spread = round(crossbar_row * apex_col / (_GLYPH_HEIGHT - 1))
+    for c in range(apex_col - crossbar_spread, apex_col + crossbar_spread + 1):
+        grid[crossbar_row][c] = True
+        grid[crossbar_row + 1][c] = True
     return ["".join("█" if cell else " " for cell in row) for row in grid]
 
 
 _LETTER_GLYPHS = {
     "S": _rect_glyph(7, [(0, 1, 0, 6), (3, 4, 0, 0), (6, 7, 0, 6), (9, 10, 6, 6), (12, 13, 0, 6)]),
     "E": _rect_glyph(7, [(0, 1, 0, 6), (3, 4, 0, 0), (6, 7, 0, 6), (9, 10, 0, 0), (12, 13, 0, 6)]),
-    "N": _n_glyph(),
+    "C": _rect_glyph(7, [(0, 1, 0, 6), (0, 13, 0, 1), (12, 13, 0, 6)]),
+    "K": _k_glyph(),
+    "R": _r_glyph(),
+    "A": _a_glyph(),
     "T": _rect_glyph(7, [(0, 1, 0, 6), (3, 13, 3, 3)]),
     "I": _rect_glyph(7, [(0, 1, 0, 6), (3, 10, 3, 3), (12, 13, 0, 6)]),
     "L": _rect_glyph(7, [(0, 10, 0, 0), (12, 13, 0, 6)]),
@@ -215,7 +263,7 @@ def _compose_hero_rows() -> list[str]:
             for fr, oro in zip(fill_rows, outline_rows)
         ]
 
-    word_tagged = _tag(*_add_outline(_block_wordmark("SENTINEL")))
+    word_tagged = _tag(*_add_outline(_block_wordmark("SKILLTRACE")))
     icon_tagged = _tag(*_add_outline(_MASCOT_ROWS))
 
     height = max(len(word_tagged), len(icon_tagged))
@@ -248,7 +296,7 @@ def _render_tagged_row(tagged_row: str, color: bool) -> str:
 
 def _package_version() -> str:
     try:
-        return importlib.metadata.version("skill-sentinel")
+        return importlib.metadata.version("skilltrace")
     except importlib.metadata.PackageNotFoundError:
         return "dev"
 
@@ -259,7 +307,7 @@ def _installed_commit() -> str | None:
     # vcs_info, so this quietly returns None rather than fabricating one.
     # Decorative footer detail — must never crash the CLI over it.
     try:
-        raw = importlib.metadata.distribution("skill-sentinel").read_text("direct_url.json")
+        raw = importlib.metadata.distribution("skilltrace").read_text("direct_url.json")
         commit = json.loads(raw).get("vcs_info", {}).get("commit_id") if raw else None
         return commit[:8] if commit else None
     except Exception:
@@ -291,7 +339,7 @@ def _build_banner(color: bool) -> str:
 
 
 def _build_footer(color: bool) -> str:
-    version_line = f"skill-sentinel v{_package_version()}"
+    version_line = f"skilltrace v{_package_version()}"
     commit = _installed_commit()
     if commit:
         version_line += f" · {commit}"
@@ -307,9 +355,9 @@ def _maybe_print_banner() -> None:
 
 
 _QUICKSTART = [
-    ("skill-sentinel scan ./my-skill", "scan a local skill directory"),
-    ("skill-sentinel scan <git-url>", "scan a skill, or a whole collection repo, from git"),
-    ("skill-sentinel scan ./my-skill --html", "also write a self-contained HTML report"),
+    ("skilltrace scan ./my-skill", "scan a local skill directory"),
+    ("skilltrace scan <git-url>", "scan a skill, or a whole collection repo, from git"),
+    ("skilltrace scan ./my-skill --html", "also write a self-contained HTML report"),
 ]
 
 
@@ -319,7 +367,7 @@ def _build_welcome(color: bool) -> str:
 
     cmd_width = max(len(cmd) for cmd, _ in _QUICKSTART)
     bullet_lines = [f"● {cmd.ljust(cmd_width)}   {blurb}" for cmd, blurb in _QUICKSTART]
-    help_line = "Run 'skill-sentinel scan --help' for the full list of options."
+    help_line = "Run 'skilltrace scan --help' for the full list of options."
     # Same ⌜⌝/⌞⌟ frame the banner above uses, same design language, not a
     # coincidence, so the two blocks read as one connected piece of output
     # rather than an unrelated banner glued to plain unstyled help text.
@@ -354,11 +402,11 @@ def _print_welcome() -> None:
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="skill-sentinel",
+        prog="skilltrace",
         description="A behavioral scanner for Claude Skills — sandboxes a skill and "
         "reports what it actually does, instead of trusting its description.",
     )
-    # Not required: a bare `skill-sentinel` invocation shows the welcome screen
+    # Not required: a bare `skilltrace` invocation shows the welcome screen
     # (see _print_welcome) instead of an argparse usage error.
     subparsers = parser.add_subparsers(dest="command", required=False)
 
@@ -428,7 +476,7 @@ def _run_scan(args: argparse.Namespace) -> int:
         )
         return 5
 
-    with tempfile.TemporaryDirectory(prefix="skill-sentinel-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="skilltrace-") as tmpdir:
         try:
             source_dir = resolve_skill_source(args.path_or_url, Path(tmpdir))
         except SentinelError as exc:

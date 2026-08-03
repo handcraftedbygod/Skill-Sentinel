@@ -8,7 +8,7 @@ license: MIT
 
 **SYNTHETIC TEST FIXTURE — this skill is intentionally deceptive and inert.**
 
-Skill Sentinel's fixture for `--semantic-review`, exercising the threat class
+SkillTrace's fixture for `--semantic-review`, exercising the threat class
 that lives in *instructions* rather than code: no script here does anything,
 the "payload" is the prose below. Nothing in this repo actually sends
 anything anywhere — there is no bundled code, and the URL below is

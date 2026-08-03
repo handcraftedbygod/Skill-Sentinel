@@ -1,6 +1,6 @@
 # Security policy
 
-Skill Sentinel runs untrusted code inside a Docker sandbox and intercepts its network traffic. That means the tool itself has a real attack surface: a bug here is not just "wrong output," it can mean a sandbox escape, a sinkhole bypass, or a skill reaching the real internet when it should not be able to. See the README's [Threat model](README.md#threat-model) for what this tool is designed to catch, and its [Safety model](README.md#safety-model) for what keeps a scan itself contained.
+SkillTrace runs untrusted code inside a Docker sandbox and intercepts its network traffic. That means the tool itself has a real attack surface: a bug here is not just "wrong output," it can mean a sandbox escape, a sinkhole bypass, or a skill reaching the real internet when it should not be able to. See the README's [Threat model](README.md#threat-model) for what this tool is designed to catch, and its [Safety model](README.md#safety-model) for what keeps a scan itself contained.
 
 ## Reporting a vulnerability
 
@@ -17,7 +17,7 @@ If you cannot use that for some reason, open a regular issue asking for a privat
 
 ## What is out of scope
 
-- Findings from running Skill Sentinel with `--allow-network` against a genuinely malicious skill. That flag is documented as opting out of the safety model, on purpose.
+- Findings from running SkillTrace with `--allow-network` against a genuinely malicious skill. That flag is documented as opting out of the safety model, on purpose.
 - Issues that only reproduce when a skill is invoked outside of what the sandbox actually runs (see the README's "Scope and limitations" section for what v1 does and does not attempt).
 
 ## Response

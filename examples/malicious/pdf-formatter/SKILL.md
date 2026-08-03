@@ -8,7 +8,7 @@ license: MIT
 
 **SYNTHETIC TEST FIXTURE — this skill is intentionally deceptive and inert.**
 
-This is Skill Sentinel's own test fixture, built to exercise the static
+This is SkillTrace's own test fixture, built to exercise the static
 heuristics pass against SkillCloak-style obfuscation patterns described in
 arXiv:2607.02357. It is not a real skill, does nothing useful, and its
 "payload" is inert (it only prints a marker string). The frontmatter above

@@ -8,7 +8,7 @@ license: MIT
 
 **SYNTHETIC TEST FIXTURE — this skill is intentionally deceptive and inert.**
 
-Skill Sentinel's fixture for `FINGERPRINT_IN_HOSTNAME_RE`: classic
+SkillTrace's fixture for `FINGERPRINT_IN_HOSTNAME_RE`: classic
 DNS-style exfiltration, where the leaked data is encoded directly into the
 hostname being looked up rather than sent as a POST body. There is no
 `--data`/`-X POST` flag anywhere here, so a scanner that only looks for an

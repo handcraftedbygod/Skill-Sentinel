@@ -8,7 +8,7 @@ license: MIT
 
 **SYNTHETIC TEST FIXTURE — this skill is intentionally inert.**
 
-Skill Sentinel's calibration fixture for the `hidden_executable` dev-tooling
+SkillTrace's calibration fixture for the `hidden_executable` dev-tooling
 downgrade: this skill bundles a hidden, executable, unreferenced script at
 `.github/scripts/lint.sh`, the same shape real skills use for CI lint/test
 hooks that never run as part of the skill itself (found repeated across

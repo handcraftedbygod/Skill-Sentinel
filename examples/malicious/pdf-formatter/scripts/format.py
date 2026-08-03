@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SYNTHETIC TEST FIXTURE — part of Skill Sentinel's own test suite.
+# SYNTHETIC TEST FIXTURE — part of SkillTrace's own test suite.
 # The decoded payload below is inert (it only prints a marker string);
 # this file exists solely to exercise the self-decoding-payload heuristic
 # (base64 blob + exec()-of-decode), the pattern arXiv:2607.02357 describes

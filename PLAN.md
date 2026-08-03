@@ -8,13 +8,13 @@
 > decrypted request even for that attack pattern. See the README's "How it
 > works" section for what was actually built.
 
-# Skill Sentinel — Build v1 (SPEC.md steps 1-6)
+# SkillTrace — Build v1 (SPEC.md steps 1-6)
 
 ## Context
 
-This repo (`handcraftedbygod/Skill-Sentinel`) currently contains only `LICENSE`, a 1-line `README.md`, and a fully-written `SPEC.md` design doc — no code yet. `SPEC.md` explains the motivation in detail: a July 2026 academic paper (arXiv:2607.02357) disclosed **SkillCloak**, malicious Claude Skills that hide payloads and evade the static-analysis-only scanners that currently exist for this ecosystem. Nobody has shipped a friendly, dynamic/behavioral scanner yet — that's the validated gap this project fills, timed to a fresh news hook.
+This repo (`handcraftedbygod/SkillTrace`) currently contains only `LICENSE`, a 1-line `README.md`, and a fully-written `SPEC.md` design doc — no code yet. `SPEC.md` explains the motivation in detail: a July 2026 academic paper (arXiv:2607.02357) disclosed **SkillCloak**, malicious Claude Skills that hide payloads and evade the static-analysis-only scanners that currently exist for this ecosystem. Nobody has shipped a friendly, dynamic/behavioral scanner yet — that's the validated gap this project fills, timed to a fresh news hook.
 
-This plan implements SPEC.md's build-order **steps 1-6**: a complete, installable `skill-sentinel` CLI that sandboxes a candidate skill in Docker, traces its actual behavior (`strace` for subprocess/network/file activity, `mitmproxy` for decrypted HTTPS bodies, `dnsmasq` as a DNS sinkhole), runs cheap static heuristics as a first pass, and produces a Markdown/JSON risk report. **Steps 7-8** (scanning real public repos for launch content, flipping the repo public) are explicitly out of scope for this session — those involve external, hard-to-reverse actions that need separate confirmation later.
+This plan implements SPEC.md's build-order **steps 1-6**: a complete, installable `skilltrace` CLI that sandboxes a candidate skill in Docker, traces its actual behavior (`strace` for subprocess/network/file activity, `mitmproxy` for decrypted HTTPS bodies, `dnsmasq` as a DNS sinkhole), runs cheap static heuristics as a first pass, and produces a Markdown/JSON risk report. **Steps 7-8** (scanning real public repos for launch content, flipping the repo public) are explicitly out of scope for this session — those involve external, hard-to-reverse actions that need separate confirmation later.
 
 **Environment caveat, confirmed this session:** the Docker CLI is present but no daemon is currently running here (`/var/run/docker.sock` missing; `dockerd`/`containerd` binaries exist but haven't been started). This session appears to be a Firecracker microVM (real kernel boot, not a shared-kernel container), so starting `dockerd` is plausible — but that's a state-changing action to attempt during implementation (outside plan mode), not something confirmed yet. Practical effect: **steps 1, 5, and the non-sandbox parts of 4 and 6 are buildable and fully verifiable in this session right now; steps 2, 3, and the sandbox-integration parts of 4 are buildable now but only manually verifiable once a Docker daemon is confirmed reachable** (either by starting one here, or falling back to GitHub Actions runners, which have Docker working by default — first guaranteed-Docker point in the whole pipeline). Implementation should attempt starting `dockerd` early and adjust verification expectations based on the result, rather than blocking on it.
 
@@ -23,9 +23,9 @@ This plan implements SPEC.md's build-order **steps 1-6**: a complete, installabl
 ## Architecture (per SPEC.md, unchanged)
 
 ```
-skill-sentinel/
+skilltrace/
   README.md
-  pyproject.toml                   — pip/pipx-installable, entry point `skill-sentinel`
+  pyproject.toml                   — pip/pipx-installable, entry point `skilltrace`
   sentinel/
     __init__.py
     findings.py                    — shared Finding dataclass + Severity enum (used by heuristics.py and report.py)
@@ -53,7 +53,7 @@ skill-sentinel/
 ## Build steps
 
 ### Step 0 — scaffolding
-- `pyproject.toml` (deps: `pyyaml`; dev: `pytest`; entry point `skill-sentinel = "sentinel.cli:main"`), `sentinel/__init__.py`.
+- `pyproject.toml` (deps: `pyyaml`; dev: `pytest`; entry point `skilltrace = "sentinel.cli:main"`), `sentinel/__init__.py`.
 
 ### Step 1 — `skillmd.py` + `heuristics.py` + `findings.py` (no Docker needed)
 - `findings.py`: `Finding` dataclass, `Severity` enum — shared type both heuristics and the report use.
@@ -77,7 +77,7 @@ skill-sentinel/
 ### Step 4 — `report.py` + `cli.py`
 - `report.py`: `compute_risk_score()` as an explicit weighted constants table; `render_markdown()` / `render_json()` (explicit `.to_dict()`, not generic `asdict`, for enum/Path handling); always states "no network activity observed" explicitly rather than omitting the section.
 - `cli.py`: `scan` subcommand per SPEC's signature plus `--fail-threshold {low,medium,high,critical}` (needed for step 6's CI gate, not in SPEC's literal signature — worth calling out as a small addition); maps known exceptions to clean stderr + distinct exit codes.
-- **Done when:** `skill-sentinel --help` works; Docker-unavailable error path is fully testable now; heuristics-only scan produces valid Markdown and `--json` output (`python -m json.tool` clean) now — sandboxed portion pending Docker daemon.
+- **Done when:** `skilltrace --help` works; Docker-unavailable error path is fully testable now; heuristics-only scan produces valid Markdown and `--json` output (`python -m json.tool` clean) now — sandboxed portion pending Docker daemon.
 
 ### Step 5 — fixtures + required test
 - `examples/benign-skill/` — trivial, harmless.
@@ -86,14 +86,14 @@ skill-sentinel/
 - **Done when:** `pytest tests/test_heuristics.py -v` passes. Zero Docker involvement — the one fully-guaranteed milestone this session.
 
 ### Step 6 — CI example + README
-- `.github/workflows/skill-ci.yml.example`: checkout → setup Python → install `skill-sentinel` → `scan . --json --fail-threshold high -o report.json` → upload artifact. Note in comments that GitHub-hosted runners have Docker working by default.
+- `.github/workflows/skill-ci.yml.example`: checkout → setup Python → install `skilltrace` → `scan . --json --fail-threshold high -o report.json` → upload artifact. Note in comments that GitHub-hosted runners have Docker working by default.
 - `README.md` rewrite: SkillCloak/arXiv hook → what it does vs. static-only competitors → install/quickstart → example output (ideally generated from `examples/malicious-sample`) → how it works → safety model (`--allow-network` caveat, `--network none` tradeoff noted above, isolation-not-detection-for-secrets) → CI integration → scope/limitations mirroring SPEC's own cuts → license → a reserved "Real-world findings (coming soon)" heading for the later step 7/8 write-up.
 - **Done when:** README renders cleanly, workflow YAML parses. Fully verifiable now.
 
 ## Verification
 
 1. `pytest tests/test_heuristics.py -v` — must pass, no Docker required.
-2. `skill-sentinel --help` and `skill-sentinel scan examples/benign-skill --json` — must run and produce valid JSON via heuristics path alone.
-3. Attempt to start `dockerd` in-session early during implementation; if it comes up: `docker build -t skill-sentinel-sandbox docker/`, then `skill-sentinel scan examples/malicious-sample` should show the self-decoding payload's execve/connect calls, decrypted destination where applicable, and a non-zero risk score; `skill-sentinel scan examples/benign-skill` should be clean.
+2. `skilltrace --help` and `skilltrace scan examples/benign-skill --json` — must run and produce valid JSON via heuristics path alone.
+3. Attempt to start `dockerd` in-session early during implementation; if it comes up: `docker build -t skilltrace-sandbox docker/`, then `skilltrace scan examples/malicious-sample` should show the self-decoding payload's execve/connect calls, decrypted destination where applicable, and a non-zero risk score; `skilltrace scan examples/benign-skill` should be clean.
 4. If `dockerd` cannot be started in this session, clearly report that steps 2-4's sandbox path is code-complete but unverified here, and that CI (step 6's workflow) is the fallback verification path.
 5. Confirm the "Docker not installed/daemon not running" error path produces a clean, actionable message (guaranteed testable right now since the daemon is absent).

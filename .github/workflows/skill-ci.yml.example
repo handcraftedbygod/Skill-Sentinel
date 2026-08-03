@@ -5,7 +5,7 @@
 # GitHub-hosted runners have a working Docker daemon by default, so the
 # sandbox steps (strace + dnsmasq sinkhole + mitmproxy interception) work
 # here without any extra setup.
-name: Skill Sentinel scan
+name: SkillTrace scan
 
 on:
   pull_request:
@@ -22,12 +22,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install skill-sentinel
-        run: pip install git+https://github.com/handcraftedbygod/Skill-Sentinel.git
+      - name: Install skilltrace
+        run: pip install git+https://github.com/handcraftedbygod/SkillTrace.git
 
       - name: Scan
         run: |
-          skill-sentinel scan . \
+          skilltrace scan . \
             --json \
             --fail-threshold high \
             --output report.json
@@ -36,5 +36,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: skill-sentinel-report
+          name: skilltrace-report
           path: report.json

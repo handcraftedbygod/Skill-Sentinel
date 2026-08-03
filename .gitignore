@@ -5,4 +5,4 @@ __pycache__/
 build/
 dist/
 .venv/
-skill-sentinel-report.html
+skilltrace-report.html
