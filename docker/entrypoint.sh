@@ -81,4 +81,15 @@ STRACE_EXIT=$?
 set -e
 
 kill "${DNSMASQ_PID}" "${MITM_PID}" 2>/dev/null || true
+
+# dnsmasq drops root privileges after binding port 53 and writes its log as
+# that unprivileged internal user; mitmproxy's log is written as the
+# dedicated mitmproxy user. On a real Linux Docker daemon (bind mounts share
+# host UIDs directly, unlike Docker Desktop's filesystem-sharing layer, which
+# normalizes this away), the host-side reader is neither of those internal
+# users and gets denied. Flatten to world-readable at the one point that
+# actually crosses the container/host boundary, rather than chasing each
+# writer's own umask.
+chmod 644 /scratch/*.log 2>/dev/null || true
+
 exit "${STRACE_EXIT}"
