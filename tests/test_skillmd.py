@@ -2,7 +2,12 @@
 
 from pathlib import Path
 
-from sentinel.skillmd import discover_skill_directories, extract_usage_examples, parse_skill_md
+from sentinel.skillmd import (
+    discover_skill_directories,
+    extract_usage_examples,
+    normalize_allowed_tools,
+    parse_skill_md,
+)
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
@@ -81,6 +86,60 @@ def test_lowercase_skill_md_is_found_and_parsed(tmp_path):
     assert discover_skill_directories(tmp_path) == [skill_dir]
     metadata = parse_skill_md(skill_dir)
     assert metadata.name == "clawhub"
+
+
+def test_when_to_use_is_parsed_from_frontmatter(tmp_path):
+    # when_to_use drives activation matching but, unlike description, is never
+    # shown in a skill-picker UI — a real gap this project found via research
+    # (HiddenLayer, "What's the matter with Skills", 2026-07-09): instructions
+    # hidden here are invisible to a human skimming the skill list.
+    skill_dir = tmp_path / "hyphenated"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: hyphenated\nwhen-to-use: use this for X\n---\nbody\n", encoding="utf-8"
+    )
+    assert parse_skill_md(skill_dir).when_to_use == "use this for X"
+
+    skill_dir2 = tmp_path / "underscored"
+    skill_dir2.mkdir()
+    (skill_dir2 / "SKILL.md").write_text(
+        "---\nname: underscored\nwhen_to_use: use this for Y\n---\nbody\n", encoding="utf-8"
+    )
+    assert parse_skill_md(skill_dir2).when_to_use == "use this for Y"
+
+
+def test_when_to_use_defaults_to_none_when_absent(tmp_path):
+    skill_dir = tmp_path / "plain"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("---\nname: plain\n---\nbody\n", encoding="utf-8")
+    assert parse_skill_md(skill_dir).when_to_use is None
+
+    no_frontmatter_dir = tmp_path / "no-frontmatter"
+    no_frontmatter_dir.mkdir()
+    (no_frontmatter_dir / "SKILL.md").write_text("just body text, no frontmatter\n", encoding="utf-8")
+    assert parse_skill_md(no_frontmatter_dir).when_to_use is None
+
+
+def test_normalize_allowed_tools_splits_space_separated_string():
+    # Regression test: found a real skill-registry's own AGENTS.md/CONTRIBUTING.md
+    # (during this project's launch scan) documenting allowed-tools as a single
+    # space-separated string naming several tools at once, e.g. "Read Write Edit
+    # Bash" — not a YAML list. Treating that whole string as one opaque token
+    # would silently miss an unscoped Bash grant hiding among several tools.
+    assert normalize_allowed_tools("Read Write Edit Bash") == ["Read", "Write", "Edit", "Bash"]
+
+
+def test_normalize_allowed_tools_keeps_scoped_grants_internal_space_intact():
+    # A scoped grant can legitimately contain its own internal space (e.g.
+    # a command with an argument) — must stay one token, not get shredded by
+    # the space-separated-string splitting above.
+    assert normalize_allowed_tools("Bash(git commit -m:*) Read") == ["Bash(git commit -m:*)", "Read"]
+
+
+def test_normalize_allowed_tools_handles_list_and_none():
+    assert normalize_allowed_tools(["Read", "Bash(git status:*)"]) == ["Read", "Bash(git status:*)"]
+    assert normalize_allowed_tools(None) == []
+    assert normalize_allowed_tools("") == []
 
 
 def test_extract_usage_examples_skips_doc_placeholders():

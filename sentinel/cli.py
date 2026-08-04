@@ -508,7 +508,7 @@ def _run_scan(args: argparse.Namespace) -> int:
             if total > 1:
                 print(f"[{idx}/{total}] scanning {metadata.name or skill_dir.name}...", file=sys.stderr)
 
-            heuristic_findings = run_heuristics(skill_dir)
+            heuristic_findings = run_heuristics(skill_dir, metadata)
             bundled_files = discover_bundled_files(skill_dir)
             candidates = build_invocation_candidates(skill_dir, bundled_files, metadata.body, args.invoke)
 
@@ -516,7 +516,11 @@ def _run_scan(args: argparse.Namespace) -> int:
             if args.semantic_review:
                 try:
                     heuristic_findings = heuristic_findings + review_skill_instructions(
-                        metadata.name, metadata.description, metadata.body, source=str(skill_dir)
+                        metadata.name,
+                        metadata.description,
+                        metadata.body,
+                        when_to_use=metadata.when_to_use,
+                        source=str(skill_dir),
                     )
                     semantic_review_ran = True
                 except SemanticReviewError as exc:

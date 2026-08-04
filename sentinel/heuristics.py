@@ -8,7 +8,15 @@ import re
 from pathlib import Path
 
 from sentinel.findings import Finding, Severity
-from sentinel.skillmd import discover_bundled_files, find_skill_md_file
+from sentinel.skillmd import (
+    SkillMdNotFoundError,
+    SkillMdParseError,
+    SkillMetadata,
+    discover_bundled_files,
+    find_skill_md_file,
+    normalize_allowed_tools,
+    parse_skill_md,
+)
 
 BASE64_BLOB_RE = re.compile(rb"[A-Za-z0-9+/]{%d,}={0,2}" % 200)
 
@@ -495,6 +503,42 @@ def scan_text_for_prose_instructions(text: str, source: str) -> list[Finding]:
     return findings
 
 
+# `allowed-tools` pre-authorizes tool calls, silently skipping the confirmation
+# prompt a user would otherwise see for those commands (HiddenLayer research,
+# "What's the matter with Skills", 2026-07-09; labs.reversec.com's research on
+# the same allowed-tools: Bash(*) pattern). Originally also matched bare
+# "Bash" with no parens at all — real-world validation against a 30-repo fresh
+# scan found that fires on the single most common, completely ordinary way
+# real skills declare tool needs (`allowed-tools: [Bash, Read, Write, Grep,
+# ...]`, one tool name per line, no per-command scoping): 56 hits across 30
+# repos, 100% bare "Bash", zero actual Bash(*) matches. Narrowed to the
+# pattern the cited research actually describes: a scope expression that
+# *looks* careful (parenthesized, like a real command restriction) but
+# wildcards it away — deceptive specifically because it resembles the
+# legitimate `Bash(git status:*)` idiom without being one. Bare "Bash" (no
+# parens) has no comparable deceptive shape, it's just the default way of
+# asking for shell access, so it's deliberately not flagged.
+BROAD_TOOL_GRANT_RE = re.compile(r"^(Bash\(\*+\)|\*)$")
+
+
+def scan_allowed_tools_for_broad_grant(allowed_tools: object, source: str) -> list[Finding]:
+    tools = normalize_allowed_tools(allowed_tools)
+    if not any(BROAD_TOOL_GRANT_RE.match(tool.strip()) for tool in tools):
+        return []
+    return [
+        Finding(
+            category="frontmatter_broad_tool_grant",
+            severity=Severity.MEDIUM,
+            summary="`allowed-tools` grants every tool, or a Bash scope that only looks "
+            "restricted (`Bash(*)` wildcards away the restriction), silently pre-authorizing "
+            "commands and skipping the permission prompt a user would otherwise see — worth a "
+            "human look, since a genuinely narrow grant (e.g. `Bash(git status:*)`) is the "
+            "standard, legitimate way to request only what's needed",
+            source=source,
+        )
+    ]
+
+
 def scan_file_for_prose_instructions(path: Path) -> list[Finding]:
     if path.suffix not in PROSE_INSTRUCTION_EXTENSIONS:
         return []
@@ -505,8 +549,16 @@ def scan_file_for_prose_instructions(path: Path) -> list[Finding]:
     return scan_text_for_prose_instructions(text, str(path))
 
 
-def run_heuristics(skill_dir: Path) -> list[Finding]:
-    """Single entry point: run all static heuristics against a skill directory."""
+def run_heuristics(skill_dir: Path, metadata: SkillMetadata | None = None) -> list[Finding]:
+    """Single entry point: run all static heuristics against a skill directory.
+
+    metadata is optional — pass the already-parsed SkillMetadata when the
+    caller has one (avoids re-parsing SKILL.md a second time); otherwise this
+    parses it internally. The whole-file prose scan below is independent of
+    metadata parsing succeeding (it works on raw text, not YAML), so it still
+    runs even when frontmatter is malformed; the metadata-driven checks
+    (description/when_to_use/allowed-tools) are skipped in that case, same as
+    every prior behavior for a SKILL.md this tool can't fully parse."""
     findings: list[Finding] = []
 
     for bundled_file in discover_bundled_files(skill_dir):
@@ -524,5 +576,28 @@ def run_heuristics(skill_dir: Path) -> list[Finding]:
             body = None
         if body is not None:
             findings.extend(scan_text_for_prose_instructions(body, str(skill_md_path)))
+
+    if metadata is None:
+        try:
+            metadata = parse_skill_md(skill_dir)
+        except (SkillMdNotFoundError, SkillMdParseError, OSError):
+            metadata = None
+
+    if metadata is not None:
+        # description/when_to_use are YAML frontmatter fields, not part of the
+        # whole-file scan's line-by-line text above by coincidence alone —
+        # scanned explicitly and separately so a hit is attributable to the
+        # specific field (when_to_use in particular is never shown in a
+        # skill-picker UI the way description is, per the HiddenLayer research
+        # cited above).
+        if metadata.description:
+            findings.extend(
+                scan_text_for_prose_instructions(metadata.description, f"{metadata.path} (description)")
+            )
+        if metadata.when_to_use:
+            findings.extend(
+                scan_text_for_prose_instructions(metadata.when_to_use, f"{metadata.path} (when_to_use)")
+            )
+        findings.extend(scan_allowed_tools_for_broad_grant(metadata.allowed_tools, str(metadata.path)))
 
     return findings

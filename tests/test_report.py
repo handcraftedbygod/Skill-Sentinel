@@ -310,12 +310,13 @@ def test_render_html_multi_shows_summary_table_and_per_skill_sections():
     assert "skill-b" in output
 
 
-def _metadata(name: str = "test-skill") -> SkillMetadata:
+def _metadata(name: str = "test-skill", allowed_tools=None) -> SkillMetadata:
     return SkillMetadata(
         name=name,
         description="A test skill.",
         license=None,
-        allowed_tools=None,
+        allowed_tools=allowed_tools,
+        when_to_use=None,
         raw_frontmatter={},
         body="",
         path=Path(f"/tmp/{name}"),
@@ -419,3 +420,48 @@ def test_sandbox_not_attempted_finding_appears_under_subprocess_section():
     output = render_markdown(report)
     subprocess_section = output.split("## Subprocess / execution")[1].split("##")[0]
     assert "no invocable candidate found" in subprocess_section
+
+
+def test_allowed_tools_surfaced_in_report_and_json():
+    report = build_report(Path("/tmp/skill"), _metadata(allowed_tools=["Bash", "Read"]), [], None, [])
+    assert report.allowed_tools == ["Bash", "Read"]
+
+    markdown = render_markdown(report)
+    assert "`Bash`" in markdown and "`Read`" in markdown
+
+    data = json.loads(render_json(report))
+    assert data["allowed_tools"] == ["Bash", "Read"]
+
+
+def test_allowed_tools_absent_shows_none_declared():
+    report = build_report(Path("/tmp/skill"), _metadata(allowed_tools=None), [], None, [])
+    assert report.allowed_tools == []
+    assert "(none declared)" in render_markdown(report)
+    assert "(none declared)" in render_html(report)
+
+
+def test_frontmatter_broad_tool_grant_gets_confidence_and_mitre():
+    findings = [Finding(category="frontmatter_broad_tool_grant", severity=Severity.MEDIUM, summary="x")]
+    report = build_report(Path("/tmp/skill"), _metadata(), findings, None, [])
+    finding = report.findings[0]
+    assert finding.confidence == Confidence.MEDIUM
+    assert finding.mitre_technique == "T1059"
+
+
+def test_frontmatter_broad_tool_grant_renders_under_static_red_flags():
+    findings = [
+        Finding(
+            category="frontmatter_broad_tool_grant",
+            severity=Severity.MEDIUM,
+            summary="unscoped Bash grant",
+            source="SKILL.md",
+        )
+    ]
+    report = build_report(Path("/tmp/skill"), _metadata(), findings, None, [])
+
+    markdown = render_markdown(report)
+    static_section = markdown.split("## Static red flags")[1].split("##")[0]
+    assert "unscoped Bash grant" in static_section
+
+    html_output = render_html(report)
+    assert "unscoped Bash grant" in html_output

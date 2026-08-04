@@ -63,9 +63,57 @@ class SkillMetadata:
     description: str | None
     license: str | None
     allowed_tools: list | None
+    # Drives skill *activation* matching but, unlike description, is never shown
+    # in a skill-picker UI — invisible-instruction attacks hide here instead of
+    # in description (HiddenLayer research, "What's the matter with Skills",
+    # 2026-07-09).
+    when_to_use: str | None
     raw_frontmatter: dict
     body: str
     path: Path
+
+
+def _split_tool_tokens(text: str) -> list[str]:
+    """Split on whitespace, except inside a scoped grant's parens — a real
+    documented shape (found in a real skill-registry's own AGENTS.md/
+    CONTRIBUTING.md during this project's launch scan) is a single
+    space-separated string of multiple tool names, e.g. "Read Write Edit
+    Bash" — treating that whole string as one opaque token would silently
+    miss an unscoped Bash grant hiding among several space-separated tools.
+    A scoped grant can legitimately contain its own internal space (e.g.
+    "Bash(git commit -m:*)"), which must stay one token, not get shredded."""
+    tokens: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch == "(":
+            depth += 1
+            current.append(ch)
+        elif ch == ")":
+            depth = max(0, depth - 1)
+            current.append(ch)
+        elif ch.isspace() and depth == 0:
+            if current:
+                tokens.append("".join(current))
+                current = []
+        else:
+            current.append(ch)
+    if current:
+        tokens.append("".join(current))
+    return tokens
+
+
+def normalize_allowed_tools(raw: object) -> list[str]:
+    """allowed-tools is commonly a YAML list, but a single space-separated
+    string (possibly naming several tools at once) is also a real documented
+    shape — tolerate both rather than silently dropping either."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return _split_tool_tokens(raw)
+    if isinstance(raw, list):
+        return [str(item) for item in raw if item]
+    return []
 
 
 def find_skill_md_file(skill_dir: Path) -> Path | None:
@@ -97,6 +145,7 @@ def parse_skill_md(skill_dir: Path) -> SkillMetadata:
             description=None,
             license=None,
             allowed_tools=None,
+            when_to_use=None,
             raw_frontmatter={},
             body=text,
             path=skill_md_path,
@@ -120,6 +169,7 @@ def parse_skill_md(skill_dir: Path) -> SkillMetadata:
         description=raw_frontmatter.get("description"),
         license=raw_frontmatter.get("license"),
         allowed_tools=raw_frontmatter.get("allowed-tools") or raw_frontmatter.get("allowed_tools"),
+        when_to_use=raw_frontmatter.get("when-to-use") or raw_frontmatter.get("when_to_use"),
         raw_frontmatter=raw_frontmatter,
         body=body,
         path=skill_md_path,

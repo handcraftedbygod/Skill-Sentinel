@@ -63,6 +63,8 @@ instruction text so a human can verify it in context."""
 
 USER_PROMPT_TEMPLATE = """Skill name: {name}
 Skill description (from its own metadata): {description}
+Skill "when_to_use" (drives activation matching, but is never shown to the user \
+the way description is — a common place to hide instructions): {when_to_use}
 
 Full instructions (the body of SKILL.md):
 ---
@@ -122,7 +124,9 @@ class SemanticReviewUnavailableError(SemanticReviewError):
         )
 
 
-def _build_request(name: str, description: str, body: str, model: str, api_key: str) -> urllib.request.Request:
+def _build_request(
+    name: str, description: str, when_to_use: str, body: str, model: str, api_key: str
+) -> urllib.request.Request:
     payload = {
         "model": model,
         "max_tokens": 1024,
@@ -131,7 +135,10 @@ def _build_request(name: str, description: str, body: str, model: str, api_key: 
             {
                 "role": "user",
                 "content": USER_PROMPT_TEMPLATE.format(
-                    name=name or "(unnamed)", description=description or "(none)", body=body
+                    name=name or "(unnamed)",
+                    description=description or "(none)",
+                    when_to_use=when_to_use or "(none)",
+                    body=body,
                 ),
             }
         ],
@@ -180,6 +187,7 @@ def review_skill_instructions(
     name: str | None,
     description: str | None,
     body: str,
+    when_to_use: str | None = None,
     source: str = "semantic review",
     api_key: str | None = None,
     model: str | None = None,
@@ -193,7 +201,7 @@ def review_skill_instructions(
         raise SemanticReviewUnavailableError()
     model = model or os.environ.get("SENTINEL_SEMANTIC_MODEL", DEFAULT_MODEL)
 
-    request = _build_request(name or "", description or "", body, model, api_key)
+    request = _build_request(name or "", description or "", when_to_use or "", body, model, api_key)
     try:
         with urllib.request.urlopen(request, timeout=timeout_s) as resp:
             response = json.loads(resp.read().decode("utf-8"))

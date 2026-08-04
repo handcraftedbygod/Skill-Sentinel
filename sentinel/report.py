@@ -19,7 +19,7 @@ from sentinel.sandbox import (
     strace_notable_execve_events,
     strace_notable_openat_events,
 )
-from sentinel.skillmd import SkillMetadata
+from sentinel.skillmd import SkillMetadata, normalize_allowed_tools
 
 # Explicit, auditable weights — used to compute a single numeric score on top
 # of the per-finding severities, so two reports are comparable at a glance.
@@ -41,6 +41,7 @@ STATIC_FINDING_CATEGORIES = (
     "skill_md_exfil_instruction",
     "skill_md_remote_exec_instruction",
     "skill_md_decode_exec_instruction",
+    "frontmatter_broad_tool_grant",
 )
 
 # Confidence: how certain the detection method itself is (deterministic AST/regex
@@ -57,6 +58,7 @@ CATEGORY_METADATA: dict[str, tuple[Confidence, str]] = {
     "skill_md_decode_exec_instruction": (Confidence.HIGH, "T1140"),
     "skill_md_remote_exec_instruction": (Confidence.MEDIUM, "T1059"),
     "skill_md_exfil_instruction": (Confidence.HIGH, "T1041"),
+    "frontmatter_broad_tool_grant": (Confidence.MEDIUM, "T1059"),
     "sandbox_timeout": (Confidence.HIGH, ""),
     "sandbox_no_trace_data": (Confidence.HIGH, ""),
     "sandbox_not_attempted": (Confidence.HIGH, ""),
@@ -342,6 +344,7 @@ class Report:
     generated_at: float = field(default_factory=time.time)
     semantic_review_ran: bool = False
     sandbox_ran: bool = False
+    allowed_tools: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -354,6 +357,7 @@ class Report:
             "generated_at": self.generated_at,
             "semantic_review_ran": self.semantic_review_ran,
             "sandbox_ran": self.sandbox_ran,
+            "allowed_tools": self.allowed_tools,
             "findings": [f.to_dict() for f in self.findings],
         }
 
@@ -394,6 +398,7 @@ def build_report(
         invocations=invocations,
         semantic_review_ran=semantic_review_ran,
         sandbox_ran=sandbox_ran,
+        allowed_tools=normalize_allowed_tools(metadata.allowed_tools),
     )
 
 
@@ -417,6 +422,11 @@ def render_markdown(report: Report) -> str:
     lines.append(f"**Risk score:** {report.risk_score} ({report.risk_level.value.upper()})")
     lines.append("")
     lines.append(f"**Invocations attempted:** {', '.join(f'`{i}`' for i in report.invocations) or '(none)'}")
+    lines.append("")
+    lines.append(
+        f"**Pre-authorized tools (allowed-tools):** "
+        f"{', '.join(f'`{t}`' for t in report.allowed_tools) or '(none declared)'}"
+    )
     lines.append("")
 
     network_findings = [f for f in report.findings if f.category in ("network_request", "network_connection")]
@@ -590,6 +600,7 @@ def _report_body_html(report: Report) -> str:
     not_checked = "Not checked (--no-sandbox)."
     description = f'<p class="description">{html.escape(report.skill_description)}</p>' if report.skill_description else ""
     invocations = ", ".join(f"<code>{html.escape(i)}</code>" for i in report.invocations) or "(none)"
+    allowed_tools = ", ".join(f"<code>{html.escape(t)}</code>" for t in report.allowed_tools) or "(none declared)"
     risk_color = SEVERITY_COLOR[report.risk_level.value]
 
     sections = [
@@ -613,6 +624,7 @@ def _report_body_html(report: Report) -> str:
         f'<div class="risk-badge" style="background:{risk_color}">'
         f"{report.risk_level.value.upper()} ({report.risk_score})</div>"
         f'<p class="invocations">Invocations attempted: {invocations}</p>'
+        f'<p class="invocations">Pre-authorized tools (allowed-tools): {allowed_tools}</p>'
         f"{''.join(sections)}"
     )
 
