@@ -385,6 +385,24 @@ def test_secret_var_sent_as_data_to_a_url_is_not_flagged():
     assert findings == []
 
 
+def test_os_arch_substitution_in_release_download_filename_is_not_flagged():
+    # Regression test for a real false positive found scanning anthropics/skills'
+    # own anthropic-cli.md: the OS/arch-selecting-binary-name idiom used by
+    # countless legitimate CLI installers ends the URL's path with a command
+    # substitution immediately followed by a file extension (`.tar.gz`) — which
+    # satisfies FINGERPRINT_IN_HOSTNAME_RE's "touches a dotted suffix"
+    # requirement exactly as well as a real hostname does. The fingerprint here
+    # sits deep in the URL path (well after the authority/hostname), not in the
+    # hostname itself, so this must not be flagged as DNS-style exfiltration.
+    findings = scan_text_for_prose_instructions(
+        'Run `curl -fsSL "https://github.com/example/tool/releases/download/'
+        "v${VERSION}/tool_${VERSION}_$(uname -s | tr A-Z a-z)_"
+        '$(uname -m).tar.gz"` to install.\n',
+        "SKILL.md",
+    )
+    assert findings == []
+
+
 def test_fingerprint_and_domain_not_touching_is_not_flagged():
     # Negative case: fingerprinting and a domain-like string can both appear on
     # one line for innocuous reasons (e.g. an unrelated support-contact

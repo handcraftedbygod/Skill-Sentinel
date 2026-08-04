@@ -346,6 +346,26 @@ FINGERPRINT_IN_HOSTNAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+
+def _fingerprint_targets_hostname(line: str) -> bool:
+    """FINGERPRINT_IN_HOSTNAME_RE only confirms a fingerprint substitution touches
+    *some* dotted suffix — a file extension in a release-download URL's path
+    (`ant_${VERSION}_$(uname -m ...).tar.gz`, the OS/arch-selecting-binary-name
+    idiom used by countless legitimate CLI installers, found flagging
+    anthropics/skills' own anthropic-cli.md) satisfies that identically to a
+    real DNS-exfil hostname (`$(whoami).evil.com`). Distinguish them structurally:
+    a real exfil hostname sits in the URL's authority component, immediately
+    after the scheme and before the first `/` — a path-embedded substitution
+    always has at least one `/` between the scheme and the match. nslookup/dig/
+    ping targets have no scheme/path at all, so there's nothing to check."""
+    for match in FINGERPRINT_IN_HOSTNAME_RE.finditer(line):
+        scheme_end = line.rfind("://", 0, match.start())
+        if scheme_end == -1:
+            return True
+        if "/" not in line[scheme_end + 3 : match.start()]:
+            return True
+    return False
+
 # The classic "curl pipe bash" install pattern (and its PowerShell equivalent,
 # "iwr ... | iex") is one of the most well-known malware-distribution vectors
 # in the industry — reframed here as a prose instruction rather than a script,
@@ -460,7 +480,7 @@ def scan_text_for_prose_instructions(text: str, source: str) -> list[Finding]:
                 )
             )
             continue
-        if EXFIL_COMMAND_RE.search(line) and FINGERPRINT_IN_HOSTNAME_RE.search(line):
+        if EXFIL_COMMAND_RE.search(line) and _fingerprint_targets_hostname(line):
             findings.append(
                 Finding(
                     category="skill_md_exfil_instruction",
