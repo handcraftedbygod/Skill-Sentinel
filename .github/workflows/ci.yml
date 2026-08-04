@@ -23,3 +23,50 @@ jobs:
 
       - name: Test
         run: pytest -q
+
+  sandbox-integration:
+    # Unit tests above never touch a real Docker daemon (see tests/test_sandbox.py's
+    # own docstring) — the actual safety boundary (--network none, the iptables
+    # REDIRECT, the mitmproxy sinkhole) was previously verified by a human running
+    # it manually once, never by CI. This job runs the real pipeline end to end
+    # against two known-answer fixtures so a regression there fails a PR instead
+    # of shipping silently.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Docker sanity check
+        run: docker info
+
+      - name: Sandboxed scan of a known-malicious fixture
+        run: |
+          skilltrace scan examples/malicious/pdf-formatter --json -o malicious.json
+          python - <<'PY'
+          import json
+          report = json.load(open("malicious.json"))
+          assert report["sandbox_ran"] is True, "sandbox did not run"
+          assert report["risk_level"] == "critical", f"expected critical, got {report['risk_level']}"
+          diagnostics = {"sandbox_timeout", "sandbox_no_trace_data", "sandbox_not_attempted"}
+          categories = {f["category"] for f in report["findings"]}
+          hit = categories & diagnostics
+          assert not hit, f"sandbox degraded instead of tracing for real: {hit}"
+          print("sandboxed malicious-fixture scan: OK")
+          PY
+
+      - name: Sandboxed scan of a known-clean fixture
+        run: |
+          skilltrace scan examples/clean/word-counter --json -o clean.json
+          python - <<'PY'
+          import json
+          report = json.load(open("clean.json"))
+          assert report["sandbox_ran"] is True, "sandbox did not run"
+          assert report["risk_level"] == "low", f"expected low, got {report['risk_level']}"
+          print("sandboxed clean-fixture scan: OK")
+          PY

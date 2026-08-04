@@ -1,4 +1,4 @@
-# SkillTrace (WORK IN PROGRESS)
+# SkillTrace
 
 [![CI](https://img.shields.io/github/actions/workflow/status/handcraftedbygod/SkillTrace/ci.yml?branch=main&label=tests)](https://github.com/handcraftedbygod/SkillTrace/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/handcraftedbygod/SkillTrace)](LICENSE)
@@ -86,6 +86,8 @@ Every fixture below lives under [`examples/`](examples/), is inert by design, an
 | [`edge-case/support-ticket-triage`](examples/edge-case/support-ticket-triage) | Prompt-injection-style manipulation entirely in natural language, no code, no shell commands | Nothing, this isn't a syntactic pattern at all, by design | LOW (0) under the static/sandbox pass; needs `--semantic-review` to catch |
 | [`edge-case/cli-tool-installer`](examples/edge-case/cli-tool-installer) | A legitimate curl-pipe-sh installer, syntactically identical to a real remote-exec attack | Flags it, but at the same severity as a genuine attack, no way to tell them apart | MEDIUM (score 3), calibrated below CRITICAL and labeled "worth a human look" |
 | [`edge-case/dev-tooling-script`](examples/edge-case/dev-tooling-script) | A hidden executable under a well-known CI/dev-tooling path (`.github/scripts/`) | Flags it identically to an unexplained hidden payload | MEDIUM (score 3), same underlying check, downgraded for a known-benign path shape |
+
+![Horizontal bar chart of risk score per fixture: three CRITICAL fixtures (pdf-formatter 25, dns-exfil-sample 15, cloud-deploy-helper 15), two MEDIUM (dev-tooling-script 3, cli-tool-installer 3), two LOW (support-ticket-triage 0, word-counter 0)](docs/assets/fixture-benchmark-chart.png)
 
 ## Architecture
 
@@ -229,6 +231,8 @@ SkillTrace isn't the only project working on this problem, and an earlier versio
 - **[SkillSieve](https://arxiv.org/abs/2604.06550)** layers static triage (regex, AST, and metadata) with a multi-model LLM jury for the harder cases, again without a sandboxed dynamic-execution stage of its own.
 
 Given all of that, this project's actual contribution isn't "the first dynamic scanner." What it offers concretely: decrypted-HTTPS visibility specifically (not just PCAP), and a lightweight, single-skill or CI-integration workflow rather than a registry-crawling research framework. It also hasn't been evaluated against any of the datasets above yet, a real gap, not a hidden one, see [Scope and limitations](#scope-and-limitations-v1).
+
+The same Docker-sandbox-plus-syscall-capture shape also shows up one layer down the stack, aimed at a different artifact: **[mcp-sec-audit](https://arxiv.org/abs/2603.21641)** and **[mcpsec](https://github.com/manthanghasadiya/mcpsec)** dynamically analyze MCP *servers* (the tool-providing processes an agent connects to), not Claude Skills (the natural-language instruction bundles covered here). Related technique, different attack surface, worth knowing about if you're evaluating coverage across both.
 
 Background and framework references:
 

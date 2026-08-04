@@ -47,8 +47,9 @@ STATIC_FINDING_CATEGORIES = (
 # match vs. a probabilistic entropy check vs. LLM judgment), not how bad the
 # finding is if true. MITRE ATT&CK technique IDs are omitted ("") for categories
 # that are scan-infrastructure diagnostics (sandbox_timeout, sandbox_no_trace_data,
-# tls_handshake_failed) or LLM judgment (semantic_review): no real attacker TTP
-# maps cleanly onto either, and a stretched mapping would be less honest than none.
+# sandbox_not_attempted, tls_handshake_failed) or LLM judgment (semantic_review):
+# no real attacker TTP maps cleanly onto either, and a stretched mapping would be
+# less honest than none.
 CATEGORY_METADATA: dict[str, tuple[Confidence, str]] = {
     "base64_blob": (Confidence.MEDIUM, "T1027"),
     "eval_exec_decode": (Confidence.HIGH, "T1140"),
@@ -58,6 +59,7 @@ CATEGORY_METADATA: dict[str, tuple[Confidence, str]] = {
     "skill_md_exfil_instruction": (Confidence.HIGH, "T1041"),
     "sandbox_timeout": (Confidence.HIGH, ""),
     "sandbox_no_trace_data": (Confidence.HIGH, ""),
+    "sandbox_not_attempted": (Confidence.HIGH, ""),
     "network_request": (Confidence.HIGH, "T1041"),
     "tls_handshake_failed": (Confidence.MEDIUM, ""),
     "out_of_scope_file_access": (Confidence.HIGH, "T1005"),
@@ -339,6 +341,7 @@ class Report:
     invocations: list[str]
     generated_at: float = field(default_factory=time.time)
     semantic_review_ran: bool = False
+    sandbox_ran: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -350,6 +353,7 @@ class Report:
             "invocations": self.invocations,
             "generated_at": self.generated_at,
             "semantic_review_ran": self.semantic_review_ran,
+            "sandbox_ran": self.sandbox_ran,
             "findings": [f.to_dict() for f in self.findings],
         }
 
@@ -369,6 +373,7 @@ def build_report(
     sandbox_results: list[SandboxRunResult] | None,
     invocations: list[str],
     semantic_review_ran: bool = False,
+    sandbox_ran: bool = False,
 ) -> Report:
     all_findings = list(heuristic_findings)
     for result in sandbox_results or []:
@@ -388,6 +393,7 @@ def build_report(
         risk_level=level,
         invocations=invocations,
         semantic_review_ran=semantic_review_ran,
+        sandbox_ran=sandbox_ran,
     )
 
 
@@ -419,18 +425,20 @@ def render_markdown(report: Report) -> str:
         for f in network_findings:
             lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}{_confidence_suffix(f)}")
     else:
-        lines.append("- No network activity observed.")
+        lines.append("- No network activity observed." if report.sandbox_ran else "- Not checked (--no-sandbox).")
     lines.append("")
 
     subprocess_findings = [
-        f for f in report.findings if f.category in ("sandbox_timeout", "sandbox_no_trace_data", "unexpected_subprocess")
+        f
+        for f in report.findings
+        if f.category in ("sandbox_timeout", "sandbox_no_trace_data", "sandbox_not_attempted", "unexpected_subprocess")
     ]
     lines.append("## Subprocess / execution")
     if subprocess_findings:
         for f in subprocess_findings:
             lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}{_confidence_suffix(f)}")
     else:
-        lines.append("- Nothing unusual observed.")
+        lines.append("- Nothing unusual observed." if report.sandbox_ran else "- Not checked (--no-sandbox).")
     lines.append("")
 
     file_findings = [f for f in report.findings if f.category == "out_of_scope_file_access"]
@@ -439,7 +447,11 @@ def render_markdown(report: Report) -> str:
         for f in file_findings:
             lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}{_confidence_suffix(f)}")
     else:
-        lines.append("- No file access outside the skill's own directory observed.")
+        lines.append(
+            "- No file access outside the skill's own directory observed."
+            if report.sandbox_ran
+            else "- Not checked (--no-sandbox)."
+        )
     lines.append("")
 
     static_findings = [f for f in report.findings if f.category in STATIC_FINDING_CATEGORIES]
@@ -560,7 +572,11 @@ def _section_html(title: str, findings: list[Finding], empty_message: str) -> st
 
 def _report_body_html(report: Report) -> str:
     network = [f for f in report.findings if f.category in ("network_request", "network_connection")]
-    subprocess_findings = [f for f in report.findings if f.category in ("sandbox_timeout", "sandbox_no_trace_data", "unexpected_subprocess")]
+    subprocess_findings = [
+        f
+        for f in report.findings
+        if f.category in ("sandbox_timeout", "sandbox_no_trace_data", "sandbox_not_attempted", "unexpected_subprocess")
+    ]
     file_findings = [f for f in report.findings if f.category == "out_of_scope_file_access"]
     static_findings = [f for f in report.findings if f.category in STATIC_FINDING_CATEGORIES]
     semantic_findings = [f for f in report.findings if f.category == "semantic_review"]
@@ -571,15 +587,20 @@ def _report_body_html(report: Report) -> str:
     ]
 
     semantic_empty = "Ran, nothing found." if report.semantic_review_ran else "Not run (use --semantic-review)."
+    not_checked = "Not checked (--no-sandbox)."
     description = f'<p class="description">{html.escape(report.skill_description)}</p>' if report.skill_description else ""
     invocations = ", ".join(f"<code>{html.escape(i)}</code>" for i in report.invocations) or "(none)"
     risk_color = SEVERITY_COLOR[report.risk_level.value]
 
     sections = [
-        _section_html("Network activity", network, "No network activity observed."),
-        _section_html("Subprocess / execution", subprocess_findings, "Nothing unusual observed."),
+        _section_html("Network activity", network, "No network activity observed." if report.sandbox_ran else not_checked),
         _section_html(
-            "Out-of-scope file access", file_findings, "No file access outside the skill's own directory observed."
+            "Subprocess / execution", subprocess_findings, "Nothing unusual observed." if report.sandbox_ran else not_checked
+        ),
+        _section_html(
+            "Out-of-scope file access",
+            file_findings,
+            "No file access outside the skill's own directory observed." if report.sandbox_ran else not_checked,
         ),
         _section_html("Static red flags", static_findings, "None found."),
         _section_html("Semantic / instruction review", semantic_findings, semantic_empty),

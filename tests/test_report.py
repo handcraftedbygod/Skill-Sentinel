@@ -382,3 +382,40 @@ def test_render_json_includes_confidence_and_mitre_technique():
     finding = data["findings"][0]
     assert finding["confidence"] == "high"
     assert finding["mitre_technique"] == "T1041"
+
+
+def test_markdown_labels_unchecked_sections_when_sandbox_did_not_run():
+    report = build_report(Path("/tmp/skill"), _metadata(), [], None, [], sandbox_ran=False)
+    output = render_markdown(report)
+    assert output.count("Not checked (--no-sandbox).") == 3
+    assert "No network activity observed." not in output
+    assert "Nothing unusual observed." not in output
+
+
+def test_markdown_shows_clean_state_when_sandbox_ran_and_found_nothing():
+    report = build_report(Path("/tmp/skill"), _metadata(), [], None, [], sandbox_ran=True)
+    output = render_markdown(report)
+    assert "No network activity observed." in output
+    assert "Nothing unusual observed." in output
+    assert "Not checked (--no-sandbox)." not in output
+
+
+def test_html_labels_unchecked_sections_when_sandbox_did_not_run():
+    report = build_report(Path("/tmp/skill"), _metadata(), [], None, [], sandbox_ran=False)
+    output = render_html(report)
+    assert output.count("Not checked (--no-sandbox).") == 3
+
+
+def test_sandbox_not_attempted_finding_appears_under_subprocess_section():
+    findings = [
+        Finding(
+            category="sandbox_not_attempted",
+            severity=Severity.MEDIUM,
+            summary="no invocable candidate found",
+            source="sandbox",
+        )
+    ]
+    report = build_report(Path("/tmp/skill"), _metadata(), findings, None, [], sandbox_ran=True)
+    output = render_markdown(report)
+    subprocess_section = output.split("## Subprocess / execution")[1].split("##")[0]
+    assert "no invocable candidate found" in subprocess_section

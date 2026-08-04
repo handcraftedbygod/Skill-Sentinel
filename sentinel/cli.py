@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from sentinel.findings import Severity
+from sentinel.findings import Finding, Severity
 from sentinel.heuristics import run_heuristics
 from sentinel.report import build_report, diff_sandbox_results, render_html_multi, render_json_multi, render_markdown_multi
 from sentinel.sandbox import (
@@ -492,7 +492,6 @@ def _run_scan(args: argparse.Namespace) -> int:
             print(f"error: {SkillMdNotFoundError(source_dir)}", file=sys.stderr)
             return 2
 
-        docker_checked = False
         reports = []
         total = len(skill_dirs)
         for idx, skill_dir in enumerate(skill_dirs, start=1):
@@ -525,14 +524,34 @@ def _run_scan(args: argparse.Namespace) -> int:
 
             sandbox_results = None
             if not args.no_sandbox:
-                if not docker_checked:
-                    try:
-                        ensure_docker_available()
-                    except DockerUnavailableError as exc:
-                        print(f"error: {exc}", file=sys.stderr)
-                        return 3
-                    docker_checked = True
+                # run_skill_in_sandbox() below also calls ensure_docker_available()
+                # itself (it's a public function other callers may use directly) —
+                # this call exists only to fail fast with a distinct exit code
+                # before doing any candidate-building work, not to avoid the
+                # (cheap, subprocess-level) check that follows.
+                try:
+                    ensure_docker_available()
+                except DockerUnavailableError as exc:
+                    print(f"error: {exc}", file=sys.stderr)
+                    return 3
 
+                if not candidates:
+                    # A pure-prose skill (no bundled scripts, no --invoke, no
+                    # SKILL.md usage examples) has nothing for the sandbox to run —
+                    # exactly the attack shape this project's own threat model
+                    # names first. Without this, the report renders identically to
+                    # a genuinely clean sandboxed run; static heuristics still ran
+                    # against the SKILL.md body, but dynamic behavior was never observed.
+                    heuristic_findings = heuristic_findings + [
+                        Finding(
+                            category="sandbox_not_attempted",
+                            severity=Severity.MEDIUM,
+                            summary="No invocable candidate found (no bundled script, --invoke flag, or "
+                            "SKILL.md usage example) — the sandbox never ran, so dynamic behavior was not "
+                            "observed; only the static pass applies to this result",
+                            source="sandbox",
+                        )
+                    ]
                 if candidates:
                     try:
                         sandbox_results = run_skill_in_sandbox(
@@ -559,7 +578,13 @@ def _run_scan(args: argparse.Namespace) -> int:
                         return 4
 
             report = build_report(
-                skill_dir, metadata, heuristic_findings, sandbox_results, candidates, semantic_review_ran
+                skill_dir,
+                metadata,
+                heuristic_findings,
+                sandbox_results,
+                candidates,
+                semantic_review_ran,
+                sandbox_ran=not args.no_sandbox,
             )
             reports.append(report)
             if total > 1:
@@ -596,6 +621,14 @@ def _run_scan(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows picks the console's ambient codepage (often cp1252) for stdout/stderr
+    # regardless of the source file's own UTF-8 encoding — an em-dash then encodes
+    # as a single cp1252 byte that's invalid UTF-8, rendering as mojibake on any
+    # UTF-8 terminal. Force UTF-8 so output is correct independent of the caller's
+    # environment. Guarded: test doubles for sys.stdout may lack reconfigure().
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     _maybe_print_banner()
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
