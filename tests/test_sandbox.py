@@ -2,7 +2,7 @@
 
 These run against static fixture logs and need no Docker — the orchestration
 functions (build_sandbox_image, run_skill_in_sandbox) are exercised manually,
-per SPEC.md's verification section, since they need a real Docker daemon.
+per docs/SPEC.md's verification section, since they need a real Docker daemon.
 """
 
 from pathlib import Path

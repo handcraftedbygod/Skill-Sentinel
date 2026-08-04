@@ -2,7 +2,7 @@
 and parses the strace/dnsmasq/mitmproxy logs it produces.
 
 Shells out to the `docker` CLI rather than using the docker-py SDK — the CLI
-is the already-installed dependency, per SPEC.md.
+is the already-installed dependency, per docs/SPEC.md.
 """
 
 from __future__ import annotations
@@ -534,7 +534,6 @@ def _run_one_candidate(
         exit_code = result.returncode
     except subprocess.TimeoutExpired:
         timed_out = True
-        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
     finally:
         subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
 
