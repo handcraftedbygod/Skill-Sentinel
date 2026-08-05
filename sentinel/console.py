@@ -13,8 +13,14 @@ html.escape().
 
 from __future__ import annotations
 
+import importlib.metadata
+from contextlib import contextmanager
+from dataclasses import dataclass
+
 from rich.console import Console
+from rich.live import Live
 from rich.table import Table
+from rich.text import Text
 
 from sentinel.findings import Severity
 from sentinel.report import Report
@@ -25,6 +31,30 @@ SEVERITY_STYLE = {
     Severity.HIGH: "dark_orange",
     Severity.CRITICAL: "bold red",
 }
+
+# figlet "ansi_shadow" font, generated once (`pyfiglet.Figlet(font="ansi_shadow").renderText("SKILLTRACE")`)
+# and pasted as a literal constant — a fixed word never needs a runtime ASCII-art
+# generator dependency.
+_WORDMARK_ART = "\n".join(
+    line.rstrip()
+    for line in r"""
+███████╗██╗  ██╗██╗██╗     ██╗  ████████╗██████╗  █████╗  ██████╗███████╗
+██╔════╝██║ ██╔╝██║██║     ██║  ╚══██╔══╝██╔══██╗██╔══██╗██╔════╝██╔════╝
+███████╗█████╔╝ ██║██║     ██║     ██║   ██████╔╝███████║██║     █████╗
+╚════██║██╔═██╗ ██║██║     ██║     ██║   ██╔══██╗██╔══██║██║     ██╔══╝
+███████║██║  ██╗██║███████╗███████╗██║   ██║  ██║██║  ██║╚██████╗███████╗
+╚══════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚══════╝
+""".strip("\n").splitlines()
+)
+_WORDMARK_WIDTH = max(len(line) for line in _WORDMARK_ART.splitlines())
+
+
+def _package_version() -> str:
+    try:
+        return importlib.metadata.version("skilltrace")
+    except importlib.metadata.PackageNotFoundError:
+        return "dev"
+
 
 _QUICKSTART = [
     ("skilltrace scan ./my-skill", "scan a local skill directory"),
@@ -58,12 +88,24 @@ def make_console(*, stderr: bool, no_color: bool = False) -> Console:
     )
 
 
-def maybe_print_wordmark(console: Console) -> None:
+def maybe_print_banner(console: Console) -> None:
     if not console.is_terminal:
         return
-    console.print("SkillTrace", style="bold cyan", end="")
-    console.print(" — behavioral scanner for Claude, Cursor & Codex skills", style="dim")
-    console.print()
+    try:
+        console.print(_WORDMARK_ART, style="bold cyan")
+        version_line = f"v{_package_version()} — behavioral scanner for agent skills (Claude, Cursor, Codex)"
+        capability_line = "Static heuristics · Dynamic sandbox tracing · Semantic review (opt-in)"
+        console.print(version_line.center(_WORDMARK_WIDTH), style="white")
+        console.print(capability_line.center(_WORDMARK_WIDTH), style="cyan")
+        console.print()
+    except UnicodeEncodeError:
+        # Rich's legacy-Windows console writer (old cmd.exe / non-VT-capable
+        # consoles) talks to the Win32 console API directly rather than through
+        # sys.stdout, bypassing the UTF-8 stream reconfigure in cli.main() — it
+        # can fail outright on some non-VT consoles regardless of content.
+        # Plain builtin print() sidesteps that code path entirely. A purely
+        # decorative banner must never crash the CLI over it.
+        print(f"SKILLTRACE v{_package_version()}")
 
 
 def print_welcome(console: Console) -> None:
@@ -87,10 +129,89 @@ def print_warning(console: Console, message: str) -> None:
     console.print(f"warning: {message}", style="yellow")
 
 
+@dataclass
+class SkillProgress:
+    name: str
+    status: str = "Queued"  # "Queued" | "Scanning" | "Skipped" | "Done"
+    risk_level: Severity | None = None
+    risk_score: int | None = None
+
+
+_STATUS_TEXT = {
+    "Queued": ("◦ Queued", "dim"),
+    "Scanning": ("⟳ Scanning", "yellow"),
+    "Skipped": ("- Skipped", "dim"),
+    "Done": ("✓ Done", "green"),
+}
+
+
+def _build_progress_table(rows: list[SkillProgress]) -> Table:
+    table = Table(show_header=True, header_style="bold cyan", border_style="dim", pad_edge=True, expand=False)
+    table.add_column("Skill")
+    table.add_column("Status")
+    table.add_column("Risk")
+    for row in rows:
+        label, style = _STATUS_TEXT[row.status]
+        if row.risk_level is not None:
+            risk_text = Text(f"{row.risk_level.value.upper()} ({row.risk_score})", style=SEVERITY_STYLE[row.risk_level])
+        else:
+            risk_text = Text("·", style="dim")
+        table.add_row(row.name, Text(label, style=style), risk_text)
+    return table
+
+
+class CollectionProgress:
+    """Live-updating stderr table for a multi-skill collection scan. Only
+    meaningful on a real terminal — callers should check `console.is_terminal`
+    themselves and fall back to plain print lines otherwise (Live is silent
+    off-TTY anyway when transient, so this doesn't guard against that itself)."""
+
+    def __init__(self, console: Console, skill_names: list[str]):
+        self._rows = [SkillProgress(name) for name in skill_names]
+        self._live = Live(_build_progress_table(self._rows), console=console, transient=True, refresh_per_second=4)
+
+    def __enter__(self) -> "CollectionProgress":
+        self._live.__enter__()
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self._live.__exit__(*exc_info)
+
+    def start(self, idx: int, name: str) -> None:
+        self._rows[idx].name = name
+        self._rows[idx].status = "Scanning"
+        self._live.update(_build_progress_table(self._rows))
+
+    def skip(self, idx: int) -> None:
+        self._rows[idx].status = "Skipped"
+        self._live.update(_build_progress_table(self._rows))
+
+    def finish(self, idx: int, risk_level: Severity, risk_score: int) -> None:
+        self._rows[idx].status = "Done"
+        self._rows[idx].risk_level = risk_level
+        self._rows[idx].risk_score = risk_score
+        self._live.update(_build_progress_table(self._rows))
+
+
+@contextmanager
+def busy_status(console: Console, message: str, *, quiet: bool):
+    """Spinner (TTY) or a single plain line (non-TTY) around a step that can
+    take a while with otherwise zero feedback (git clone, sandbox run).
+    Suppressed entirely under --quiet, same as other progress chatter."""
+    if quiet:
+        yield
+    elif console.is_terminal:
+        with console.status(message):
+            yield
+    else:
+        console.print(message)
+        yield
+
+
 def _findings_table(findings: list) -> Table:
     table = Table(show_lines=False)
     table.add_column("Severity")
-    table.add_column("Category")
+    table.add_column("Category", overflow="fold")
     table.add_column("Summary", ratio=1, overflow="fold")
     table.add_column("Confidence")
     table.add_column("ATT&CK")
@@ -106,6 +227,23 @@ def _findings_table(findings: list) -> Table:
     return table
 
 
+def _scan_summary_grid(report: Report) -> Table:
+    # Context that's always worth showing, findings or not — otherwise a
+    # clean result ("Risk score: 0, No findings.") looks identical to the
+    # tool having done nothing at all, rather than having checked thoroughly.
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="dim")
+    grid.add_column()
+    grid.add_row("Sandbox:", "ran" if report.sandbox_ran else "not run (--static)")
+    grid.add_row(
+        "Semantic review:", "ran" if report.semantic_review_ran else "not run (--semantic-review to enable)"
+    )
+    grid.add_row("Invocations:", ", ".join(report.invocations) if report.invocations else "none attempted")
+    if report.allowed_tools:
+        grid.add_row("Allowed tools:", ", ".join(report.allowed_tools))
+    return grid
+
+
 def print_report(console: Console, report: Report) -> None:
     console.print(report.skill_name or report.skill_path, style="bold")
     if report.skill_description:
@@ -116,6 +254,8 @@ def print_report(console: Console, report: Report) -> None:
         end="",
     )
     console.print(f"({report.risk_level.value.upper()})", style=SEVERITY_STYLE.get(report.risk_level))
+    console.print()
+    console.print(_scan_summary_grid(report))
     console.print()
     if report.findings:
         console.print(_findings_table(report.findings))

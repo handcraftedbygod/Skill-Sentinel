@@ -129,6 +129,17 @@ def test_scan_help_documents_exit_codes(capsys):
     assert "Exit codes" in capsys.readouterr().out
 
 
+def test_scan_help_leads_with_examples(capsys):
+    with pytest.raises(SystemExit):
+        main(["scan", "--help"])
+    out = capsys.readouterr().out
+    assert "Examples:" in out
+    assert "skilltrace scan ./my-skill" in out
+    # Examples get their own clearly labeled section after the flag reference,
+    # not folded into individual --flag help strings as a wall of prose.
+    assert out.index("Options:") < out.index("Examples:")
+
+
 def test_no_color_help_produces_no_ansi(capsys):
     with pytest.raises(SystemExit):
         main(["--no-color", "scan", "--help"])
