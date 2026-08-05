@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 from rich.console import Console
 from rich.live import Live
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TaskProgressColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
 
@@ -208,6 +209,43 @@ def busy_status(console: Console, message: str, *, quiet: bool):
         yield
 
 
+@contextmanager
+def file_scan_progress(console: Console, total: int, *, quiet: bool):
+    """Real percentage bar over a skill's bundled files during the static
+    pass — total is known upfront (discover_bundled_files has already run),
+    so this is an honest count, not a fake/simulated fill. Yields a callback
+    to advance it; a no-op callback when there's nothing to show (--quiet,
+    non-terminal, zero files, or nested inside a collection scan's own Live
+    table — Rich doesn't support two Live displays at once, same constraint
+    busy_status already works around for the sandbox spinner).
+
+    markup=False on every TextColumn here, not just the Console: a scanned
+    file's own relative path — attacker-controlled content — is interpolated
+    directly into the filename column, and Rich's TextColumn has its own
+    independent markup flag (default True) that Console's markup=False does
+    not implicitly override."""
+    if quiet or not console.is_terminal or total == 0:
+        yield lambda _filename: None
+        return
+    progress = Progress(
+        TextColumn("Scanning files", markup=False),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TaskProgressColumn(),
+        TextColumn("{task.fields[filename]}", markup=False, style="dim"),
+        console=console,
+        transient=True,
+    )
+    with progress:
+        task_id = progress.add_task("scan", total=total, filename="")
+
+        def advance(filename: str) -> None:
+            progress.update(task_id, filename=filename)
+            progress.advance(task_id)
+
+        yield advance
+
+
 def _findings_table(findings: list) -> Table:
     table = Table(show_lines=False)
     table.add_column("Severity")
@@ -276,3 +314,42 @@ def print_summary_table(console: Console, reports: list[Report]) -> None:
             style=SEVERITY_STYLE.get(r.risk_level),
         )
     console.print(table)
+
+
+def print_reports_generated(console: Console, *, html: str, json: str, markdown: str) -> None:
+    # Not gated on --quiet, same reasoning as the existing --html "written to"
+    # line: this is the only record of where the auto-written files landed.
+    console.print()
+    console.print("Reports generated:", style="bold")
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="cyan")
+    grid.add_column()
+    grid.add_row("HTML", html)
+    grid.add_row("JSON", json)
+    grid.add_row("Markdown", markdown)
+    console.print(grid)
+
+
+def print_scan_complete(
+    console: Console,
+    *,
+    skills_scanned: int,
+    files_scanned: int,
+    findings_by_severity: dict[Severity, int],
+    elapsed_s: float,
+) -> None:
+    console.print()
+    console.print("Scan complete", style="bold green")
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="dim")
+    grid.add_column()
+    grid.add_row("Skills scanned:", str(skills_scanned))
+    grid.add_row("Files scanned:", str(files_scanned))
+    total_findings = sum(findings_by_severity.values())
+    grid.add_row("Findings:", str(total_findings))
+    for severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW):
+        count = findings_by_severity.get(severity, 0)
+        if count:
+            grid.add_row(f"  {severity.value.upper()}:", Text(str(count), style=SEVERITY_STYLE[severity]))
+    grid.add_row("Time:", f"{elapsed_s:.2f}s")
+    console.print(grid)

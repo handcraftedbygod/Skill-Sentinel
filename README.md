@@ -20,7 +20,7 @@ For the deeper design rationale behind this (why `strace` over eBPF, why severit
 - 🧠 **Catches instruction-only attacks**: `--semantic-review` sends a skill's own prose to Claude for adversarial review, for attacks that need no code at all
 - 🔒 **Zero real network risk** — `--network none` by default, every DNS lookup sinkholed to loopback; real egress is structurally impossible regardless of what a malicious skill tries
 - ⚡ **`--static` mode needs no Docker** — a fast static-only pass alone, for a quick pre-check or a Docker-free environment
-- 📄 **Self-contained HTML / JSON / Markdown reports** — one file, no external assets, drops straight into CI
+- 📄 **HTML, JSON, and Markdown reports on every scan, no flags needed** — self-contained, no external assets, auto-saved to `.skilltrace/reports/` alongside a real-time file-count progress bar and an end-of-scan summary
 - ✅ **Validated at scale**: 11,429 real skills scanned across the public ecosystem, zero malicious findings, real false positives found and fixed along the way rather than hidden (see [Real-world findings](#real-world-findings))
 
 ## Install
@@ -54,6 +54,8 @@ ANTHROPIC_API_KEY=sk-... skilltrace scan ./my-skill --semantic-review
 A single git URL can also point at a collection repo, one repo bundling many skills, each in its own subdirectory, with no `SKILL.md` at the root. SkillTrace finds every one of them and scans each independently (see `sentinel/skillmd.py`'s `discover_skill_directories`), turning the report into a list of per-skill reports instead of a single one, with per-skill progress printed to stderr as it goes (`[3/87] scanning some-skill... -> LOW (0)`) so a large collection scan isn't a silent black box. This includes skills nested under a conventional agent-tool install directory (`.claude/skills/`, `.agents/skills/`, `.gemini/skills/`, `.cursor/skills/`, `.codex/skills/`, `.openclaw/skills/`); plain dot-directory exclusion would otherwise make them invisible, which is exactly how a real third-party malicious sample was structured (see below). `SKILL.md`'s filename match is also case-insensitive, since a real sample in the wild used `skill.md`.
 
 `--html` writes a self-contained, styled HTML report alongside the normal terminal output: severity-colored findings, a summary table for collection scans, collapsible per-skill sections. Good for a full visual review or as a CI artifact you can download and open. No external assets, works offline. Terminal output itself gets severity-colored automatically when stdout is a real terminal (never when piped to a file or used with `--json`, which stay exactly what they claim to be).
+
+Every scan also auto-writes all three report formats to `.skilltrace/reports/skilltrace-scan-<timestamp>.{html,json,md}`, unconditionally, independent of `--html`/`-o`/`--json` (those remain for pinning an exact filename or format, e.g. in a script). A `Reports generated:` block prints where they landed, followed by a `Scan complete` summary (skills scanned, files scanned, findings by severity, elapsed time). On a real terminal, a live percentage bar tracks the static pass file-by-file as it runs. Add `.skilltrace/` to your `.gitignore`.
 
 ## Example output
 

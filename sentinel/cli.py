@@ -7,7 +7,10 @@ import os
 import sys
 import tempfile
 import textwrap
+import time
+from collections import Counter
 from contextlib import nullcontext
+from datetime import datetime
 from pathlib import Path
 
 from rich.console import Console
@@ -16,10 +19,13 @@ from rich_argparse import RawDescriptionRichHelpFormatter, RichHelpFormatter
 from sentinel.console import (
     CollectionProgress,
     busy_status,
+    file_scan_progress,
     make_console,
     maybe_print_banner,
     print_error,
     print_report,
+    print_reports_generated,
+    print_scan_complete,
     print_summary_table,
     print_warning,
     print_welcome,
@@ -174,6 +180,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def _run_scan(args: argparse.Namespace) -> int:
+    start_time = time.time()
     stderr_console = make_console(stderr=True, no_color=args.no_color)
 
     # Checked once, up front — not per skill_dir in the loop below. A missing key
@@ -215,6 +222,7 @@ def _run_scan(args: argparse.Namespace) -> int:
 
         reports = []
         total = len(skill_dirs)
+        total_files_scanned = 0
         # A collection scan gets a live-updating progress table on a real
         # terminal; everything else (non-TTY/CI, --quiet, or a single skill)
         # keeps the plain print-line fallback below.
@@ -256,7 +264,22 @@ def _run_scan(args: argparse.Namespace) -> int:
                 elif total > 1 and not args.quiet:
                     stderr_console.print(f"[{idx}/{total}] scanning {skill_label}...")
 
-                heuristic_findings = run_heuristics(skill_dir, metadata)
+                bundled_files = discover_bundled_files(skill_dir)
+
+                # A collection scan's Live table already owns the terminal —
+                # Rich doesn't support a second, nested Live display, so the
+                # visible bar only renders for a single-skill scan; the count
+                # itself is still tracked either way for the final summary.
+                def _on_file(filename: str) -> None:
+                    nonlocal total_files_scanned
+                    total_files_scanned += 1
+                    advance_file(filename)
+
+                with file_scan_progress(
+                    stderr_console, len(bundled_files), quiet=args.quiet or progress is not None
+                ) as advance_file:
+                    heuristic_findings = run_heuristics(skill_dir, metadata, on_file=_on_file)
+
                 if raw_directory_scan:
                     heuristic_findings = heuristic_findings + [
                         Finding(
@@ -269,7 +292,6 @@ def _run_scan(args: argparse.Namespace) -> int:
                             source="cli",
                         )
                     ]
-                bundled_files = discover_bundled_files(skill_dir)
                 candidates = build_invocation_candidates(skill_dir, bundled_files, metadata.body, args.invoke)
 
                 semantic_review_ran = False
@@ -397,6 +419,35 @@ def _run_scan(args: argparse.Namespace) -> int:
             output = render_markdown_multi(reports)
             sys.stdout.buffer.write(output.encode("utf-8", errors="replace"))
             sys.stdout.buffer.write(b"\n")
+
+    # Always written, independent of --html/-o/--json: those give explicit
+    # control over one output for scripting, this gives every format as a
+    # standing artifact without needing to remember a flag (mirrors medusa's
+    # .medusa/reports/ convention). A write failure (read-only CWD in some CI
+    # setups) is a warning, not a scan failure — the real result above already
+    # printed successfully.
+    try:
+        reports_dir = Path(".skilltrace") / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        auto_html = reports_dir / f"skilltrace-scan-{stamp}.html"
+        auto_json = reports_dir / f"skilltrace-scan-{stamp}.json"
+        auto_md = reports_dir / f"skilltrace-scan-{stamp}.md"
+        auto_html.write_text(render_html_multi(reports), encoding="utf-8")
+        auto_json.write_text(render_json_multi(reports), encoding="utf-8")
+        auto_md.write_text(render_markdown_multi(reports), encoding="utf-8")
+        print_reports_generated(stderr_console, html=str(auto_html), json=str(auto_json), markdown=str(auto_md))
+    except OSError as exc:
+        print_warning(stderr_console, f"could not write auto-generated reports: {exc}")
+
+    findings_by_severity = Counter(f.severity for r in reports for f in r.findings)
+    print_scan_complete(
+        stderr_console,
+        skills_scanned=len(reports),
+        files_scanned=total_files_scanned,
+        findings_by_severity=findings_by_severity,
+        elapsed_s=time.time() - start_time,
+    )
 
     if args.fail_threshold:
         threshold = Severity(args.fail_threshold)

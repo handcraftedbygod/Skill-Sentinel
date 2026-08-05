@@ -646,3 +646,20 @@ def test_run_heuristics_accepts_preparsed_metadata_and_matches_default(tmp_path)
     assert {(f.category, f.source) for f in default_findings} == {
         (f.category, f.source) for f in preparsed_findings
     }
+
+
+def test_run_heuristics_on_file_callback_fires_once_per_bundled_file(tmp_path):
+    (tmp_path / "SKILL.md").write_text("---\nname: probe\n---\nbody\n", encoding="utf-8")
+    (tmp_path / "a.py").write_text("print(1)\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("print(2)\n", encoding="utf-8")
+
+    seen = []
+    run_heuristics(tmp_path, on_file=seen.append)
+    assert sorted(seen) == ["a.py", "b.py"]
+
+
+def test_run_heuristics_without_on_file_still_works(tmp_path):
+    # on_file is optional — must not be required just because bundled files exist.
+    (tmp_path / "SKILL.md").write_text("---\nname: probe\n---\nbody\n", encoding="utf-8")
+    (tmp_path / "a.py").write_text("print(1)\n", encoding="utf-8")
+    assert run_heuristics(tmp_path) == []

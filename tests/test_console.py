@@ -7,11 +7,12 @@ from rich.console import Console
 
 from sentinel.console import (
     CollectionProgress,
-    maybe_print_banner,
-    print_summary_table,
-    print_report,
-    print_welcome,
     busy_status,
+    file_scan_progress,
+    maybe_print_banner,
+    print_report,
+    print_summary_table,
+    print_welcome,
 )
 from sentinel.findings import Confidence, Finding, Severity
 from sentinel.report import Report
@@ -159,3 +160,43 @@ def test_busy_status_terminal_uses_spinner_without_crashing():
     with busy_status(console, "Running in sandbox...", quiet=False):
         ran = True
     assert ran
+
+
+def test_file_scan_progress_quiet_yields_noop_callback():
+    console, buf = _console()
+    with file_scan_progress(console, 3, quiet=True) as advance:
+        advance("a.py")
+    assert buf.getvalue() == ""
+
+
+def test_file_scan_progress_zero_files_yields_noop_callback():
+    console, buf = _console()
+    with file_scan_progress(console, 0, quiet=False) as advance:
+        advance("a.py")
+    assert buf.getvalue() == ""
+
+
+def test_file_scan_progress_non_tty_yields_noop_callback():
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, markup=False, highlight=False)
+    with file_scan_progress(console, 3, quiet=False) as advance:
+        advance("a.py")
+    assert buf.getvalue() == ""
+
+
+def test_file_scan_progress_terminal_advances_without_crashing():
+    console, buf = _console()
+    with file_scan_progress(console, 2, quiet=False) as advance:
+        advance("a.py")
+        advance("b.py")
+    assert "Scanning files" in buf.getvalue()
+
+
+def test_file_scan_progress_does_not_interpret_bracket_markup_in_filename():
+    # A scanned file's relative path is attacker-controlled content — must
+    # render literally, not be parsed as Rich markup (same guard as
+    # test_report_table_does_not_interpret_bracket_markup_in_skill_content).
+    console, buf = _console()
+    with file_scan_progress(console, 1, quiet=False) as advance:
+        advance("[bold red]evil[/bold red].py")
+    assert "[bold red]evil[/bold red].py" in buf.getvalue()

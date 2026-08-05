@@ -26,6 +26,15 @@ Body text.
 """
 
 
+@pytest.fixture(autouse=True)
+def _isolated_cwd(tmp_path_factory, monkeypatch):
+    # Every scan now auto-writes .skilltrace/reports/<timestamp>.{html,json,md}
+    # relative to CWD (see _run_scan) - isolate it in its own throwaway
+    # directory, distinct from any test's own tmp_path, so running this suite
+    # never writes into the real repo root.
+    monkeypatch.chdir(tmp_path_factory.mktemp("cwd"))
+
+
 def _write_skill(tmp_path: Path, script: str | None = None) -> Path:
     (tmp_path / "SKILL.md").write_text(MINIMAL_SKILL_MD, encoding="utf-8")
     if script is not None:
@@ -120,6 +129,51 @@ def test_fail_threshold_triggers_exit_1():
 def test_clean_scan_returns_0():
     exit_code = main(["scan", str(EXAMPLES_DIR / "clean" / "word-counter"), "--no-sandbox"])
     assert exit_code == 0
+
+
+def test_scan_auto_writes_html_json_markdown_reports(capsys):
+    # Independent of --html/-o/--json: every scan gets all three, unconditionally.
+    exit_code = main(["scan", str(EXAMPLES_DIR / "clean" / "word-counter"), "--static"])
+    assert exit_code == 0
+
+    reports_dir = Path(".skilltrace") / "reports"
+    html_files = list(reports_dir.glob("*.html"))
+    json_files = list(reports_dir.glob("*.json"))
+    md_files = list(reports_dir.glob("*.md"))
+    assert len(html_files) == len(json_files) == len(md_files) == 1
+
+    report = json.loads(json_files[0].read_text(encoding="utf-8"))
+    assert report["skill_name"] == "word-counter"
+    assert "<title>word-counter</title>" in html_files[0].read_text(encoding="utf-8")
+    assert "# SkillTrace report: word-counter" in md_files[0].read_text(encoding="utf-8")
+
+    err = capsys.readouterr().err
+    assert "Reports generated:" in err
+    assert str(html_files[0]) in err
+
+
+def test_scan_complete_summary_reports_files_and_findings(capsys):
+    exit_code = main(["scan", str(EXAMPLES_DIR / "malicious" / "pdf-formatter"), "--static"])
+    assert exit_code == 0
+    err = capsys.readouterr().err
+    assert "Scan complete" in err
+    assert "Skills scanned:" in err
+    assert "Files scanned:" in err
+    # pdf-formatter's own fixture always scores 3 findings across CRITICAL/HIGH/MEDIUM.
+    assert "CRITICAL:" in err
+    assert "HIGH:" in err
+    assert "MEDIUM:" in err
+
+
+def test_report_write_failure_warns_but_does_not_fail_the_scan(capsys):
+    # A plain file already occupying .skilltrace (not a directory) makes the
+    # mkdir(parents=True) call raise FileExistsError - a real way this can
+    # fail without monkeypatching pathlib itself. Must not turn an otherwise-
+    # successful scan into a failure just because the bonus auto-write couldn't land.
+    Path(".skilltrace").write_text("not a directory", encoding="utf-8")
+    exit_code = main(["scan", str(EXAMPLES_DIR / "clean" / "word-counter"), "--static"])
+    assert exit_code == 0
+    assert "could not write auto-generated reports" in capsys.readouterr().err
 
 
 def test_scan_help_documents_exit_codes(capsys):

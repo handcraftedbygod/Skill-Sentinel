@@ -6,6 +6,7 @@ import ast
 import os
 import re
 from pathlib import Path
+from typing import Callable
 
 from sentinel.findings import Finding, Severity
 from sentinel.skillmd import (
@@ -596,7 +597,11 @@ def scan_file_for_prose_instructions(path: Path) -> list[Finding]:
     return scan_text_for_prose_instructions(text, str(path))
 
 
-def run_heuristics(skill_dir: Path, metadata: SkillMetadata | None = None) -> list[Finding]:
+def run_heuristics(
+    skill_dir: Path,
+    metadata: SkillMetadata | None = None,
+    on_file: Callable[[str], None] | None = None,
+) -> list[Finding]:
     """Single entry point: run all static heuristics against a skill directory.
 
     metadata is optional — pass the already-parsed SkillMetadata when the
@@ -605,13 +610,19 @@ def run_heuristics(skill_dir: Path, metadata: SkillMetadata | None = None) -> li
     metadata parsing succeeding (it works on raw text, not YAML), so it still
     runs even when frontmatter is malformed; the metadata-driven checks
     (description/when_to_use/allowed-tools) are skipped in that case, same as
-    every prior behavior for a SKILL.md this tool can't fully parse."""
+    every prior behavior for a SKILL.md this tool can't fully parse.
+
+    on_file, if given, is called once per bundled file right after it's
+    scanned (relative_path, not the absolute path) — a progress hook for
+    callers driving a UI, not part of this function's own logic."""
     findings: list[Finding] = []
 
     for bundled_file in discover_bundled_files(skill_dir):
         findings.extend(scan_file_for_base64_blobs(bundled_file.path))
         findings.extend(scan_file_for_eval_exec_decode(bundled_file.path))
         findings.extend(scan_file_for_prose_instructions(bundled_file.path))
+        if on_file is not None:
+            on_file(bundled_file.relative_path)
 
     findings.extend(scan_for_hidden_executable_content(skill_dir))
 
