@@ -14,6 +14,7 @@ from sentinel.heuristics import (
     run_heuristics,
     scan_allowed_tools_for_broad_grant,
     scan_file_for_base64_blobs,
+    scan_paths_for_sensitive_scope,
     scan_text_for_prose_instructions,
 )
 from sentinel.skillmd import parse_skill_md
@@ -564,6 +565,33 @@ def test_allowed_tools_as_bare_string_is_handled():
     assert scan_allowed_tools_for_broad_grant("Bash", "SKILL.md") == []
     findings = scan_allowed_tools_for_broad_grant("*", "SKILL.md")
     assert len(findings) == 1
+
+
+def test_paths_scoped_to_ssh_directory_is_flagged():
+    # Cursor's paths field (cursor.com/docs/skills) has no Claude/Codex
+    # equivalent and no allowed-tools-style confirmation prompt of its own —
+    # a skill quietly scoped to auto-activate on credential-shaped paths is a
+    # real, distinct attack surface.
+    findings = scan_paths_for_sensitive_scope(["**/.ssh/**", "**/*.py"], "SKILL.md")
+    assert len(findings) == 1
+    assert findings[0].category == "frontmatter_sensitive_path_scope"
+    assert findings[0].severity == Severity.MEDIUM
+
+
+def test_paths_scoped_to_ordinary_files_is_not_flagged():
+    assert scan_paths_for_sensitive_scope(["**/*.py", "src/**/*.ts"], "SKILL.md") == []
+
+
+def test_no_paths_declared_is_not_flagged():
+    assert scan_paths_for_sensitive_scope(None, "SKILL.md") == []
+
+
+def test_paths_as_comma_separated_string_is_handled():
+    # Cursor documents paths as accepting a comma-separated string or a list —
+    # must tolerate both, same as allowed-tools.
+    findings = scan_paths_for_sensitive_scope("**/.env, **/*.md", "SKILL.md")
+    assert len(findings) == 1
+    assert findings[0].category == "frontmatter_sensitive_path_scope"
 
 
 def test_when_to_use_prose_instruction_is_flagged_via_run_heuristics(tmp_path):

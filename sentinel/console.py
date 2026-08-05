@@ -62,7 +62,7 @@ def maybe_print_wordmark(console: Console) -> None:
     if not console.is_terminal:
         return
     console.print("SkillTrace", style="bold cyan", end="")
-    console.print(" — behavioral scanner for Claude Skills", style="dim")
+    console.print(" — behavioral scanner for Claude, Cursor & Codex skills", style="dim")
     console.print()
 
 

@@ -84,8 +84,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     common = _common_flags_parser()
     parser = argparse.ArgumentParser(
         prog="skilltrace",
-        description="A behavioral scanner for Claude Skills — sandboxes a skill and "
-        "reports what it actually does, instead of trusting its description.",
+        description="A behavioral scanner for agent skills (Claude, Cursor, Codex) — "
+        "sandboxes a skill and reports what it actually does, instead of trusting its "
+        "description.",
         parents=[common],
         formatter_class=RichHelpFormatter,
     )
@@ -183,7 +184,7 @@ def _run_scan(args: argparse.Namespace) -> int:
         # subdirectory, with no root SKILL.md at all — see
         # skillmd.discover_skill_directories.
         skill_dirs = discover_skill_directories(source_dir)
-        # Zero anywhere in the tree usually means this isn't a Claude Skill at
+        # Zero anywhere in the tree usually means this isn't an agent skill at
         # all (wrong path/URL, or an ordinary code repo) — worth a best-effort
         # static read of what's actually there rather than a hard stop, since
         # that's exactly the shape of "point SkillTrace at some repo to see if
@@ -202,6 +203,7 @@ def _run_scan(args: argparse.Namespace) -> int:
                     license=None,
                     allowed_tools=None,
                     when_to_use=None,
+                    paths=None,
                     raw_frontmatter={},
                     body="",
                     path=skill_dir,
@@ -228,9 +230,9 @@ def _run_scan(args: argparse.Namespace) -> int:
                         category="no_skill_md",
                         severity=Severity.MEDIUM,
                         summary=f"No SKILL.md found anywhere under {skill_dir} — this doesn't look "
-                        "like a Claude Skill. Static checks still ran against the raw directory "
-                        "contents, but there's no declared usage example or metadata to sandbox-run "
-                        "or evaluate against.",
+                        "like an agent skill (Claude, Cursor, or Codex). Static checks still ran "
+                        "against the raw directory contents, but there's no declared usage example "
+                        "or metadata to sandbox-run or evaluate against.",
                         source="cli",
                     )
                 ]

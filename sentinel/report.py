@@ -42,6 +42,7 @@ STATIC_FINDING_CATEGORIES = (
     "skill_md_remote_exec_instruction",
     "skill_md_decode_exec_instruction",
     "frontmatter_broad_tool_grant",
+    "frontmatter_sensitive_path_scope",
 )
 
 # Confidence: how certain the detection method itself is (deterministic AST/regex
@@ -59,6 +60,7 @@ CATEGORY_METADATA: dict[str, tuple[Confidence, str]] = {
     "skill_md_remote_exec_instruction": (Confidence.MEDIUM, "T1059"),
     "skill_md_exfil_instruction": (Confidence.HIGH, "T1041"),
     "frontmatter_broad_tool_grant": (Confidence.MEDIUM, "T1059"),
+    "frontmatter_sensitive_path_scope": (Confidence.MEDIUM, "T1552.001"),
     "sandbox_timeout": (Confidence.HIGH, ""),
     "sandbox_no_trace_data": (Confidence.HIGH, ""),
     "sandbox_not_attempted": (Confidence.HIGH, ""),

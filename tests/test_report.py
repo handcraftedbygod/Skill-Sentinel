@@ -317,6 +317,7 @@ def _metadata(name: str = "test-skill", allowed_tools=None) -> SkillMetadata:
         license=None,
         allowed_tools=allowed_tools,
         when_to_use=None,
+        paths=None,
         raw_frontmatter={},
         body="",
         path=Path(f"/tmp/{name}"),

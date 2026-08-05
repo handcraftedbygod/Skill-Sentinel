@@ -6,6 +6,7 @@ from sentinel.skillmd import (
     discover_skill_directories,
     extract_usage_examples,
     normalize_allowed_tools,
+    normalize_paths,
     parse_skill_md,
 )
 
@@ -118,6 +119,31 @@ def test_when_to_use_defaults_to_none_when_absent(tmp_path):
     no_frontmatter_dir.mkdir()
     (no_frontmatter_dir / "SKILL.md").write_text("just body text, no frontmatter\n", encoding="utf-8")
     assert parse_skill_md(no_frontmatter_dir).when_to_use is None
+
+
+def test_paths_is_parsed_from_frontmatter(tmp_path):
+    # Cursor-specific field (cursor.com/docs/skills), absent on Claude/Codex
+    # skills — must round-trip through parse_skill_md like any other field.
+    skill_dir = tmp_path / "scoped"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: scoped\npaths:\n  - \"apps/web/**\"\n---\nbody\n", encoding="utf-8"
+    )
+    assert parse_skill_md(skill_dir).paths == ["apps/web/**"]
+
+
+def test_paths_defaults_to_none_when_absent(tmp_path):
+    skill_dir = tmp_path / "plain"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("---\nname: plain\n---\nbody\n", encoding="utf-8")
+    assert parse_skill_md(skill_dir).paths is None
+
+
+def test_normalize_paths_handles_string_list_and_none():
+    assert normalize_paths(["**/.env", "**/*.py"]) == ["**/.env", "**/*.py"]
+    assert normalize_paths("**/.env, **/*.py") == ["**/.env", "**/*.py"]
+    assert normalize_paths(None) == []
+    assert normalize_paths("") == []
 
 
 def test_normalize_allowed_tools_splits_space_separated_string():

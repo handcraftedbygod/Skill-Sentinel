@@ -48,7 +48,8 @@ class SkillMdNotFoundError(Exception):
     def __init__(self, skill_dir: Path):
         super().__init__(
             f"No SKILL.md found in {skill_dir}. "
-            "SkillTrace expects a Claude Skill directory containing a SKILL.md file."
+            "SkillTrace expects an agent skill directory (Claude, Cursor, or Codex) "
+            "containing a SKILL.md file."
         )
         self.skill_dir = skill_dir
 
@@ -68,6 +69,9 @@ class SkillMetadata:
     # in description (HiddenLayer research, "What's the matter with Skills",
     # 2026-07-09).
     when_to_use: str | None
+    # Cursor-specific: scopes auto-invocation to files matching these globs
+    # (cursor.com/docs/skills). Absent on Claude/Codex skills, harmlessly None.
+    paths: object
     raw_frontmatter: dict
     body: str
     path: Path
@@ -116,6 +120,18 @@ def normalize_allowed_tools(raw: object) -> list[str]:
     return []
 
 
+def normalize_paths(raw: object) -> list[str]:
+    """Cursor's `paths` field is documented as a comma-separated string or a
+    list (cursor.com/docs/skills) — tolerate both, same as allowed-tools."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [p.strip() for p in raw.split(",") if p.strip()]
+    if isinstance(raw, list):
+        return [str(item) for item in raw if item]
+    return []
+
+
 def find_skill_md_file(skill_dir: Path) -> Path | None:
     """Case-insensitive lookup — found "skill.md" (lowercase) used in the wild
     by a real skill in snyk-labs/toxicskills-goof, plausibly specifically to
@@ -146,6 +162,7 @@ def parse_skill_md(skill_dir: Path) -> SkillMetadata:
             license=None,
             allowed_tools=None,
             when_to_use=None,
+            paths=None,
             raw_frontmatter={},
             body=text,
             path=skill_md_path,
@@ -170,6 +187,7 @@ def parse_skill_md(skill_dir: Path) -> SkillMetadata:
         license=raw_frontmatter.get("license"),
         allowed_tools=raw_frontmatter.get("allowed-tools") or raw_frontmatter.get("allowed_tools"),
         when_to_use=raw_frontmatter.get("when-to-use") or raw_frontmatter.get("when_to_use"),
+        paths=raw_frontmatter.get("paths"),
         raw_frontmatter=raw_frontmatter,
         body=body,
         path=skill_md_path,

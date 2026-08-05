@@ -15,6 +15,7 @@ from sentinel.skillmd import (
     discover_bundled_files,
     find_skill_md_file,
     normalize_allowed_tools,
+    normalize_paths,
     parse_skill_md,
 )
 
@@ -539,6 +540,52 @@ def scan_allowed_tools_for_broad_grant(allowed_tools: object, source: str) -> li
     ]
 
 
+# Cursor's `paths` frontmatter field (cursor.com/docs/skills) auto-scopes when
+# a skill gets invoked to files matching these globs — no equivalent exists on
+# Claude/Codex skills. Scoping a skill to credential-shaped locations means it
+# silently activates the moment the agent so much as reads one, with no
+# `allowed-tools`-style prompt and no equivalent of Claude's when_to_use check
+# to catch it, since the glob string itself carries the targeting rather than
+# a prose instruction. Substring match on the glob text, not real glob
+# evaluation — this only asks "what is this skill scoped to look at", not
+# "does a matching file exist right now".
+SENSITIVE_PATH_TOKENS = (
+    ".ssh",
+    ".aws",
+    ".gcloud",
+    ".kube",
+    ".gnupg",
+    ".netrc",
+    ".npmrc",
+    ".pgpass",
+    ".git-credentials",
+    "id_rsa",
+    "id_ed25519",
+    ".pem",
+    ".ppk",
+    ".env",
+    "credentials",
+)
+
+
+def scan_paths_for_sensitive_scope(paths: object, source: str) -> list[Finding]:
+    globs = normalize_paths(paths)
+    hits = [g for g in globs if any(token in g.lower() for token in SENSITIVE_PATH_TOKENS)]
+    if not hits:
+        return []
+    return [
+        Finding(
+            category="frontmatter_sensitive_path_scope",
+            severity=Severity.MEDIUM,
+            summary="`paths` auto-scopes this skill to credential-shaped locations "
+            f"({', '.join(hits)}) — it activates whenever the agent touches a matching "
+            "file, with no confirmation prompt; worth a human look, since a legitimate "
+            "dotfile/secrets-hygiene helper can look identical to reconnaissance staging",
+            source=source,
+        )
+    ]
+
+
 def scan_file_for_prose_instructions(path: Path) -> list[Finding]:
     if path.suffix not in PROSE_INSTRUCTION_EXTENSIONS:
         return []
@@ -599,5 +646,6 @@ def run_heuristics(skill_dir: Path, metadata: SkillMetadata | None = None) -> li
                 scan_text_for_prose_instructions(metadata.when_to_use, f"{metadata.path} (when_to_use)")
             )
         findings.extend(scan_allowed_tools_for_broad_grant(metadata.allowed_tools, str(metadata.path)))
+        findings.extend(scan_paths_for_sensitive_scope(metadata.paths, str(metadata.path)))
 
     return findings
