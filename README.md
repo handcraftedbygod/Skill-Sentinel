@@ -31,6 +31,16 @@ pip install git+https://github.com/handcraftedbygod/SkillTrace.git
 
 Requires [Docker](https://docs.docker.com/get-docker/) for the sandboxed scan — or add `--static` for a Docker-free static-only pass (`--no-sandbox` still works too, kept as an alias).
 
+**Virtual environment (recommended):**
+
+```
+python -m venv skilltrace-env
+source skilltrace-env/bin/activate  # On Windows: skilltrace-env\Scripts\activate
+
+pip install git+https://github.com/handcraftedbygod/SkillTrace.git
+skilltrace scan ./my-skill
+```
+
 ## Quickstart
 
 ```
