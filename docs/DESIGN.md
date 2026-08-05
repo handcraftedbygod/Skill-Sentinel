@@ -43,7 +43,7 @@ Early in this project, findings had only a severity. Adding `confidence` (how ce
 ## 4. What's actually validated, and what isn't
 
 Validated:
-- The full pipeline (static pass, sandbox, sinkhole, semantic review, differential execution) runs end to end against every fixture under `examples/`, confirmed with a live Docker daemon, not just `--no-sandbox`.
+- The full pipeline (static pass, sandbox, sinkhole, semantic review, differential execution) runs end to end against every fixture under `examples/`, confirmed with a live Docker daemon, not just `--static`.
 - One real third-party malicious sample, [`snyk-labs/toxicskills-goof`](https://github.com/snyk-labs/toxicskills-goof), correctly flags CRITICAL. Two real gaps (a dot-directory exclusion rule hiding conventional agent-tool install paths, a lowercase `skill.md` filename) were found and fixed because of this specific validation, not invented ahead of time.
 - Every static heuristic's known false-positive classes (amino-acid sequences, `data:` URIs, VCR cassettes, git's own sample hooks, legitimate `curl | sh` installer docs) are backed by a real skill or a real upstream doc that would otherwise have been misflagged, documented inline in `sentinel/heuristics.py`.
 - 11,429 real skills across 326 real-world repo-scans (see the README's [Real-world findings](../README.md#real-world-findings)), including a false positive found and fixed against Anthropic's own `anthropics/skills` repo when re-verifying that corpus against the current heuristics — see `_fingerprint_targets_hostname()` in `sentinel/heuristics.py`.

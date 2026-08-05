@@ -48,7 +48,7 @@ STATIC_FINDING_CATEGORIES = (
 # match vs. a probabilistic entropy check vs. LLM judgment), not how bad the
 # finding is if true. MITRE ATT&CK technique IDs are omitted ("") for categories
 # that are scan-infrastructure diagnostics (sandbox_timeout, sandbox_no_trace_data,
-# sandbox_not_attempted, tls_handshake_failed) or LLM judgment (semantic_review):
+# sandbox_not_attempted, no_skill_md, tls_handshake_failed) or LLM judgment (semantic_review):
 # no real attacker TTP maps cleanly onto either, and a stretched mapping would be
 # less honest than none.
 CATEGORY_METADATA: dict[str, tuple[Confidence, str]] = {
@@ -62,6 +62,7 @@ CATEGORY_METADATA: dict[str, tuple[Confidence, str]] = {
     "sandbox_timeout": (Confidence.HIGH, ""),
     "sandbox_no_trace_data": (Confidence.HIGH, ""),
     "sandbox_not_attempted": (Confidence.HIGH, ""),
+    "no_skill_md": (Confidence.HIGH, ""),
     "network_request": (Confidence.HIGH, "T1041"),
     "tls_handshake_failed": (Confidence.MEDIUM, ""),
     "out_of_scope_file_access": (Confidence.HIGH, "T1005"),
@@ -81,6 +82,8 @@ CATEGORY_METADATA: dict[str, tuple[Confidence, str]] = {
 # nonsensically above any genuine hidden_executable/exfil finding — while also
 # making the report unreadable.
 NEAR_DUPLICATE_THRESHOLD = 3
+
+NOT_CHECKED_STATIC_ONLY = "Not checked (--static)."
 
 OPENAT_PATH_RE = re.compile(r'^AT_FDCWD,\s*"([^"]*)"')
 
@@ -435,7 +438,7 @@ def render_markdown(report: Report) -> str:
         for f in network_findings:
             lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}{_confidence_suffix(f)}")
     else:
-        lines.append("- No network activity observed." if report.sandbox_ran else "- Not checked (--no-sandbox).")
+        lines.append("- No network activity observed." if report.sandbox_ran else f"- {NOT_CHECKED_STATIC_ONLY}")
     lines.append("")
 
     subprocess_findings = [
@@ -448,7 +451,7 @@ def render_markdown(report: Report) -> str:
         for f in subprocess_findings:
             lines.append(f"- **[{f.severity.value.upper()}]** {f.summary}{_confidence_suffix(f)}")
     else:
-        lines.append("- Nothing unusual observed." if report.sandbox_ran else "- Not checked (--no-sandbox).")
+        lines.append("- Nothing unusual observed." if report.sandbox_ran else f"- {NOT_CHECKED_STATIC_ONLY}")
     lines.append("")
 
     file_findings = [f for f in report.findings if f.category == "out_of_scope_file_access"]
@@ -460,7 +463,7 @@ def render_markdown(report: Report) -> str:
         lines.append(
             "- No file access outside the skill's own directory observed."
             if report.sandbox_ran
-            else "- Not checked (--no-sandbox)."
+            else f"- {NOT_CHECKED_STATIC_ONLY}"
         )
     lines.append("")
 
@@ -597,7 +600,7 @@ def _report_body_html(report: Report) -> str:
     ]
 
     semantic_empty = "Ran, nothing found." if report.semantic_review_ran else "Not run (use --semantic-review)."
-    not_checked = "Not checked (--no-sandbox)."
+    not_checked = NOT_CHECKED_STATIC_ONLY
     description = f'<p class="description">{html.escape(report.skill_description)}</p>' if report.skill_description else ""
     invocations = ", ".join(f"<code>{html.escape(i)}</code>" for i in report.invocations) or "(none)"
     allowed_tools = ", ".join(f"<code>{html.escape(t)}</code>" for t in report.allowed_tools) or "(none declared)"

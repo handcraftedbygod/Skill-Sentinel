@@ -12,6 +12,50 @@ Traditional malware scanners inspect code. A Claude Skill can carry out its enti
 
 For the deeper design rationale behind this (why `strace` over eBPF, why severity and confidence are tracked as separate axes, and an honest accounting of what's actually been validated versus what hasn't), see [`docs/DESIGN.md`](docs/DESIGN.md).
 
+## Why SkillTrace
+
+- 🐳 **Actually executes the skill** in a disposable Docker sandbox under `strace`, instead of only pattern-matching `SKILL.md`
+- 🔓 **Decrypts HTTPS** via a local mitmproxy CA — the report shows the real destination host, path, and request body, not just a bare IP
+- 🧠 **Catches instruction-only attacks**: `--semantic-review` sends a skill's own prose to Claude for adversarial review, for attacks that need no code at all
+- 🔒 **Zero real network risk** — `--network none` by default, every DNS lookup sinkholed to loopback; real egress is structurally impossible regardless of what a malicious skill tries
+- ⚡ **`--static` mode needs no Docker** — a fast static-only pass alone, for a quick pre-check or a Docker-free environment
+- 📄 **Self-contained HTML / JSON / Markdown reports** — one file, no external assets, drops straight into CI
+- ✅ **Validated at scale**: 11,429 real skills scanned across the public ecosystem, zero malicious findings, real false positives found and fixed along the way rather than hidden (see [Real-world findings](#real-world-findings))
+
+## Install
+
+```
+pip install git+https://github.com/handcraftedbygod/SkillTrace.git
+```
+
+Requires [Docker](https://docs.docker.com/get-docker/) for the sandboxed scan — or add `--static` for a Docker-free static-only pass (`--no-sandbox` still works too, kept as an alias).
+
+## Quickstart
+
+```
+skilltrace scan ./my-skill
+skilltrace scan https://github.com/someone/some-skill
+skilltrace scan ./my-skill --static          # no Docker needed
+skilltrace scan ./my-skill --html
+ANTHROPIC_API_KEY=sk-... skilltrace scan ./my-skill --semantic-review
+```
+
+A single git URL can also point at a collection repo, one repo bundling many skills, each in its own subdirectory, with no `SKILL.md` at the root. SkillTrace finds every one of them and scans each independently (see `sentinel/skillmd.py`'s `discover_skill_directories`), turning the report into a list of per-skill reports instead of a single one, with per-skill progress printed to stderr as it goes (`[3/87] scanning some-skill... -> LOW (0)`) so a large collection scan isn't a silent black box. This includes skills nested under a conventional agent-tool install directory (`.claude/skills/`, `.agents/skills/`, `.gemini/skills/`, `.cursor/skills/`, `.codex/skills/`, `.openclaw/skills/`); plain dot-directory exclusion would otherwise make them invisible, which is exactly how a real third-party malicious sample was structured (see below). `SKILL.md`'s filename match is also case-insensitive, since a real sample in the wild used `skill.md`.
+
+`--html` writes a self-contained, styled HTML report alongside the normal terminal output: severity-colored findings, a summary table for collection scans, collapsible per-skill sections. Good for a full visual review or as a CI artifact you can download and open. No external assets, works offline. Terminal output itself gets severity-colored automatically when stdout is a real terminal (never when piped to a file or used with `--json`, which stay exactly what they claim to be).
+
+## Example output
+
+Scanning SkillTrace's own `examples/malicious/pdf-formatter` test fixture, a synthetic, inert SkillCloak-style skill bundled in this repo specifically to exercise these checks, produces this, unedited:
+
+![Terminal output of a skilltrace scan flagging a CRITICAL risk score with a colored MEDIUM, HIGH, and CRITICAL finding](docs/assets/terminal-scan.png)
+
+And the `--html` report for that same scan:
+
+![Self-contained HTML report showing the same three findings with colored severity badges](docs/assets/html-report.png)
+
+This fixture's own `SKILL.md` says up front that it is inert. It never makes a network call, so this particular run only exercises the static pass: the self-decoding payload and the hidden executable at a dotfile path, the exact structural obfuscation the SkillCloak paper describes. The sandbox's decrypted-network-capture path (a skill that actually calls out, and what the intercepted request looks like in a report) is described under [How it works](#how-it-works) below, and see [Safety model](#safety-model) for why running that fixture never risks the real internet either way.
+
 ## Threat model
 
 A malicious Claude Skill may attempt to:
@@ -39,41 +83,6 @@ A Claude Skill is just natural-language instructions that an agent reads and fol
 
 Static scanners aren't the only prior art anymore, though: some tools in this space already run skills dynamically too. See [Related work](#related-work) for how this project's approach actually compares to those, not just to static-only tools.
 
-## Install
-
-```
-pip install git+https://github.com/handcraftedbygod/SkillTrace.git
-```
-
-Requires [Docker](https://docs.docker.com/get-docker/) for the sandboxed scan (`--no-sandbox` runs the static pass only, no Docker needed).
-
-## Quickstart
-
-```
-skilltrace scan ./my-skill
-skilltrace scan https://github.com/someone/some-skill
-skilltrace scan ./my-skill --invoke "python scripts/main.py --demo"
-skilltrace scan ./my-skill --json -o report.json
-skilltrace scan ./my-skill --html
-ANTHROPIC_API_KEY=sk-... skilltrace scan ./my-skill --semantic-review
-```
-
-A single git URL can also point at a collection repo, one repo bundling many skills, each in its own subdirectory, with no `SKILL.md` at the root. SkillTrace finds every one of them and scans each independently (see `sentinel/skillmd.py`'s `discover_skill_directories`), turning the report into a list of per-skill reports instead of a single one, with per-skill progress printed to stderr as it goes (`[3/87] scanning some-skill... -> LOW (0)`) so a large collection scan isn't a silent black box. This includes skills nested under a conventional agent-tool install directory (`.claude/skills/`, `.agents/skills/`, `.gemini/skills/`, `.cursor/skills/`, `.codex/skills/`, `.openclaw/skills/`); plain dot-directory exclusion would otherwise make them invisible, which is exactly how a real third-party malicious sample was structured (see below). `SKILL.md`'s filename match is also case-insensitive, since a real sample in the wild used `skill.md`.
-
-`--html` writes a self-contained, styled HTML report alongside the normal terminal output: severity-colored findings, a summary table for collection scans, collapsible per-skill sections. Good for a full visual review or as a CI artifact you can download and open. No external assets, works offline. Terminal output itself gets severity-colored automatically when stdout is a real terminal (never when piped to a file or used with `--json`, which stay exactly what they claim to be).
-
-## Example output
-
-Scanning SkillTrace's own `examples/malicious/pdf-formatter` test fixture, a synthetic, inert SkillCloak-style skill bundled in this repo specifically to exercise these checks, produces this, unedited:
-
-![Terminal output of a skilltrace scan flagging a CRITICAL risk score with a colored MEDIUM, HIGH, and CRITICAL finding](docs/assets/terminal-scan.png)
-
-And the `--html` report for that same scan:
-
-![Self-contained HTML report showing the same three findings with colored severity badges](docs/assets/html-report.png)
-
-This fixture's own `SKILL.md` says up front that it is inert. It never makes a network call, so this particular run only exercises the static pass: the self-decoding payload and the hidden executable at a dotfile path, the exact structural obfuscation the SkillCloak paper describes. The sandbox's decrypted-network-capture path (a skill that actually calls out, and what the intercepted request looks like in a report) is described under [How it works](#how-it-works) below, and see [Safety model](#safety-model) for why running that fixture never risks the real internet either way.
-
 ## Fixture benchmark
 
 Every fixture below lives under [`examples/`](examples/), is inert by design, and its `SKILL.md` says so. The middle column asks a narrower question than "would some specific competing tool catch this": whether the fixture's attack shape is even the kind of thing a pattern-matching-only scanner, with no execution and no prose parsing, could catch in principle.
@@ -99,10 +108,10 @@ skill directory or git URL
         v
 +------------------------------+
 | static pass                  |  heuristics.py, no Docker needed
-| base64 . eval/exec .         |  always runs, even with --no-sandbox
+| base64 . eval/exec .         |  always runs, even with --static
 | hidden dotfiles . prose      |
 +------------------------------+
-               |  (--no-sandbox stops here, straight to report)
+               |  (--static stops here, straight to report)
                v
 +------------------------------+
 | sandbox                      |  sandbox.py + docker/

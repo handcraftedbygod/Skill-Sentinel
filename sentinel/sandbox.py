@@ -52,7 +52,8 @@ def ensure_docker_available() -> None:
         raise DockerUnavailableError(
             "The `docker` command was not found on PATH. SkillTrace's sandbox "
             "requires Docker — install it from https://docs.docker.com/get-docker/ "
-            "and make sure `docker` is on your PATH."
+            "and make sure `docker` is on your PATH. Or skip the sandbox entirely: "
+            "add --static for a Docker-free static-only scan."
         )
     result = subprocess.run(
         ["docker", "info"], capture_output=True, text=True, encoding="utf-8", errors="replace"
@@ -61,7 +62,8 @@ def ensure_docker_available() -> None:
         raise DockerUnavailableError(
             "Docker is installed but the daemon isn't reachable (`docker info` failed). "
             "Make sure the Docker daemon is running (e.g. start Docker Desktop, or "
-            "`sudo systemctl start docker` on Linux) and that your user can access it.\n"
+            "`sudo systemctl start docker` on Linux) and that your user can access it. "
+            "Or skip the sandbox entirely: add --static for a Docker-free static-only scan.\n"
             f"docker info said: {result.stderr.strip()}"
         )
 
