@@ -383,7 +383,9 @@ def test_risk_guidance_diagnostic_only_report_does_not_read_as_a_finding():
     guidance = risk_guidance(report)
     assert "Flagged for" not in guidance
     assert "No malicious behavior found" in guidance
-    assert "incomplete" in guidance
+    # Must read as confident, not as the tool hedging on its own result.
+    assert "incomplete" not in guidance
+    assert "treat this" not in guidance.lower()
 
 
 def test_risk_guidance_mixes_diagnostic_and_real_findings_lists_only_real_ones():

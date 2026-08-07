@@ -453,10 +453,7 @@ def risk_guidance(report: Report) -> str:
         return "No concerning behavior found — this skill looks safe to use."
     real_findings = [f for f in report.findings if f.category not in DIAGNOSTIC_CATEGORIES]
     if not real_findings:
-        return (
-            f"No malicious behavior found in what could be checked, but coverage is limited: "
-            f"{_labels_for(report.findings)}. Treat this as incomplete, not a clean bill of health."
-        )
+        return f"No malicious behavior found — {_labels_for(report.findings)}, so this result is based on static checks only."
     return f"Flagged for {_labels_for(real_findings)} — {_RISK_LEVEL_VERDICT[report.risk_level]}."
 
 
