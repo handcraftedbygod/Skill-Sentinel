@@ -600,7 +600,7 @@ def scan_file_for_prose_instructions(path: Path) -> list[Finding]:
 def run_heuristics(
     skill_dir: Path,
     metadata: SkillMetadata | None = None,
-    on_file: Callable[[str], None] | None = None,
+    on_file: Callable[[str, int], None] | None = None,
 ) -> list[Finding]:
     """Single entry point: run all static heuristics against a skill directory.
 
@@ -613,8 +613,11 @@ def run_heuristics(
     every prior behavior for a SKILL.md this tool can't fully parse.
 
     on_file, if given, is called once per bundled file right after it's
-    scanned (relative_path, not the absolute path) — a progress hook for
-    callers driving a UI, not part of this function's own logic."""
+    scanned, with (relative_path, running finding count so far) - a progress
+    hook for callers driving a UI, not part of this function's own logic.
+    The count only reflects the per-file checks above it in the loop, not the
+    whole-skill checks below (hidden_executable, frontmatter scans, ...) —
+    a live-updating lower bound, finalized once this function returns."""
     findings: list[Finding] = []
 
     for bundled_file in discover_bundled_files(skill_dir):
@@ -622,7 +625,7 @@ def run_heuristics(
         findings.extend(scan_file_for_eval_exec_decode(bundled_file.path))
         findings.extend(scan_file_for_prose_instructions(bundled_file.path))
         if on_file is not None:
-            on_file(bundled_file.relative_path)
+            on_file(bundled_file.relative_path, len(findings))
 
     findings.extend(scan_for_hidden_executable_content(skill_dir))
 

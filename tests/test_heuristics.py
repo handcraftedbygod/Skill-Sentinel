@@ -654,8 +654,19 @@ def test_run_heuristics_on_file_callback_fires_once_per_bundled_file(tmp_path):
     (tmp_path / "b.py").write_text("print(2)\n", encoding="utf-8")
 
     seen = []
-    run_heuristics(tmp_path, on_file=seen.append)
+    run_heuristics(tmp_path, on_file=lambda filename, count: seen.append(filename))
     assert sorted(seen) == ["a.py", "b.py"]
+
+
+def test_run_heuristics_on_file_callback_reports_running_finding_count(tmp_path):
+    (tmp_path / "SKILL.md").write_text("---\nname: probe\n---\nbody\n", encoding="utf-8")
+    (tmp_path / "clean.py").write_text("print(1)\n", encoding="utf-8")
+    (tmp_path / "sneaky.py").write_text("exec(base64.b64decode('aGVsbG8gd29ybGQgdGhpcyBpcyBhIHRlc3Q='))\n", encoding="utf-8")
+
+    counts = {}
+    run_heuristics(tmp_path, on_file=lambda filename, count: counts.__setitem__(filename, count))
+    assert counts["clean.py"] <= counts["sneaky.py"]
+    assert counts["sneaky.py"] > 0
 
 
 def test_run_heuristics_without_on_file_still_works(tmp_path):

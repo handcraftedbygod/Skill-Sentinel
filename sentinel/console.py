@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TaskProgressColumn, TextColumn
 from rich.progress_bar import ProgressBar
+from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
@@ -141,14 +142,23 @@ class SkillProgress:
     risk_score: int | None = None
     files_done: int = 0
     files_total: int = 0
+    issues: int = 0
+    spinner: Spinner | None = None
 
 
-_STATUS_TEXT = {
-    "Queued": ("◦ Queued", "dim"),
-    "Scanning": ("⟳ Scanning", "gold3"),
-    "Skipped": ("- Skipped", "dim"),
-    "Done": ("✓ Done", "green"),
-}
+def _status_cell(row: SkillProgress):
+    # A live rich.spinner.Spinner, not a static "⟳" glyph — its render() reads
+    # the wall clock on every repaint, so it visibly spins on Live's own
+    # refresh_per_second ticks even while this skill's row hasn't changed
+    # (e.g. mid-sandbox-run, well past the static file-scan pass).
+    if row.status == "Scanning" and row.spinner is not None:
+        return row.spinner
+    text, style = {
+        "Queued": ("◦ Queued", "dim"),
+        "Skipped": ("- Skipped", "dim"),
+        "Done": ("✓ Done", "green"),
+    }[row.status]
+    return Text(text, style=style)
 
 
 def _progress_cell(done: int, total: int):
@@ -169,16 +179,40 @@ def _build_progress_table(rows: list[SkillProgress]) -> Table:
     table.add_column("Skill")
     table.add_column("Status")
     table.add_column("Files")
+    table.add_column("Issues")
     table.add_column("Risk")
     table.add_column("Progress")
     for row in rows:
-        label, style = _STATUS_TEXT[row.status]
+        files_text = Text(f"{row.files_done}/{row.files_total}" if row.files_total else "·", style="dim")
+        if row.status in ("Scanning", "Done"):
+            issues_text = Text(str(row.issues), style="dark_orange" if row.issues else "dim")
+        else:
+            issues_text = Text("·", style="dim")
         if row.risk_level is not None:
             risk_text = Text(f"{row.risk_level.value.upper()} ({row.risk_score})", style=SEVERITY_STYLE[row.risk_level])
         else:
             risk_text = Text("·", style="dim")
-        files_text = Text(f"{row.files_done}/{row.files_total}" if row.files_total else "·", style="dim")
-        table.add_row(row.name, Text(label, style=style), files_text, risk_text, _progress_cell(row.files_done, row.files_total))
+        table.add_row(
+            row.name,
+            _status_cell(row),
+            files_text,
+            issues_text,
+            risk_text,
+            _progress_cell(row.files_done, row.files_total),
+        )
+    if rows:
+        table.add_section()
+        done_files = sum(r.files_done for r in rows)
+        total_files = sum(r.files_total for r in rows)
+        pct = f"{int(done_files / total_files * 100)}%" if total_files else "0%"
+        table.add_row(
+            Text("Overall", style="bold"),
+            Text(pct, style="bold cyan"),
+            Text(f"{done_files}/{total_files}" if total_files else "·", style="bold"),
+            Text(str(sum(r.issues for r in rows)), style="bold"),
+            Text("·", style="dim"),
+            _progress_cell(done_files, total_files),
+        )
     return table
 
 
@@ -186,11 +220,18 @@ class CollectionProgress:
     """Live-updating stderr table for a multi-skill collection scan. Only
     meaningful on a real terminal — callers should check `console.is_terminal`
     themselves and fall back to plain print lines otherwise (Live is silent
-    off-TTY anyway when transient, so this doesn't guard against that itself)."""
+    off-TTY anyway when transient, so this doesn't guard against that itself).
 
-    def __init__(self, console: Console, skill_names: list[str]):
-        self._rows = [SkillProgress(name) for name in skill_names]
-        self._live = Live(_build_progress_table(self._rows), console=console, transient=True, refresh_per_second=8)
+    file_counts is required upfront (not discovered lazily per-row) so every
+    row — including ones still Queued — shows a real "done/total" and the
+    Overall row's aggregate is accurate from the very first frame, rather than
+    growing as each skill starts."""
+
+    def __init__(self, console: Console, skill_names: list[str], file_counts: list[int]):
+        self._rows = [
+            SkillProgress(name, files_total=total) for name, total in zip(skill_names, file_counts)
+        ]
+        self._live = Live(_build_progress_table(self._rows), console=console, transient=True, refresh_per_second=12)
 
     def __enter__(self) -> "CollectionProgress":
         self._live.__enter__()
@@ -200,30 +241,39 @@ class CollectionProgress:
         self._live.__exit__(*exc_info)
 
     def _refresh(self) -> None:
-        self._live.update(_build_progress_table(self._rows))
+        # refresh=True: without it, Live only repaints on its own timer, and a
+        # skill with a handful of tiny files can finish scanning faster than
+        # that tick — every intermediate state gets skipped and the bar jumps
+        # straight to 100% having never shown the real fill in between.
+        self._live.update(_build_progress_table(self._rows), refresh=True)
 
-    def start(self, idx: int, name: str, total_files: int) -> None:
+    def start(self, idx: int, name: str) -> None:
         row = self._rows[idx]
         row.name = name
         row.status = "Scanning"
-        row.files_total = total_files
         row.files_done = 0
+        row.issues = 0
+        row.spinner = Spinner("dots", text=Text("Scanning", style="gold3"))
         self._refresh()
 
-    def advance_file(self, idx: int) -> None:
-        self._rows[idx].files_done += 1
+    def advance_file(self, idx: int, running_issues: int) -> None:
+        row = self._rows[idx]
+        row.files_done += 1
+        row.issues = running_issues
         self._refresh()
 
     def skip(self, idx: int) -> None:
         self._rows[idx].status = "Skipped"
         self._refresh()
 
-    def finish(self, idx: int, risk_level: Severity, risk_score: int) -> None:
+    def finish(self, idx: int, risk_level: Severity, risk_score: int, issues: int) -> None:
         row = self._rows[idx]
         row.status = "Done"
         row.risk_level = risk_level
         row.risk_score = risk_score
         row.files_done = row.files_total
+        row.issues = issues
+        row.spinner = None
         self._refresh()
 
 

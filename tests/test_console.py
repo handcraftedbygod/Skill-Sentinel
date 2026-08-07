@@ -137,13 +137,13 @@ def test_summary_table_shows_overall_risk_score_and_guidance():
 
 def test_collection_progress_transitions_and_shows_file_progress():
     console, buf = _console(no_color=True)
-    with CollectionProgress(console, ["skill-a", "skill-b", "skill-c"]) as progress:
-        progress.start(0, "skill-a", 4)
-        progress.advance_file(0)
-        progress.advance_file(0)
+    with CollectionProgress(console, ["skill-a", "skill-b", "skill-c"], [4, 3, 2]) as progress:
+        progress.start(0, "skill-a")
+        progress.advance_file(0, 0)
+        progress.advance_file(0, 1)
         progress.skip(1)
-        progress.start(2, "skill-c", 2)
-        progress.finish(2, Severity.CRITICAL, 30)
+        progress.start(2, "skill-c")
+        progress.finish(2, Severity.CRITICAL, 30, 5)
     out = buf.getvalue()
     assert "skill-a" in out
     assert "Skipped" in out
@@ -151,6 +151,20 @@ def test_collection_progress_transitions_and_shows_file_progress():
     assert "CRITICAL (30)" in out
     assert "2/4" in out  # skill-a's file progress as of its last update
     assert "50%" in out  # skill-a: 2/4 files
+    assert "Overall" in out
+
+
+def test_collection_progress_shows_totals_upfront_for_queued_rows():
+    # A row that hasn't started scanning yet should still show its real file
+    # total (known via the file_counts pre-pass), not a bare placeholder — the
+    # Overall row's own total must be accurate from the very first frame too.
+    console, buf = _console(no_color=True)
+    with CollectionProgress(console, ["skill-a", "skill-b"], [4, 6]):
+        pass
+    out = buf.getvalue()
+    assert "0/4" in out
+    assert "0/6" in out
+    assert "0/10" in out  # Overall: 0 done out of 4+6 total
 
 
 def test_busy_status_quiet_suppresses_output(capsys):

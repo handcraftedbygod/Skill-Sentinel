@@ -223,12 +223,23 @@ def _run_scan(args: argparse.Namespace) -> int:
         reports = []
         total = len(skill_dirs)
         total_files_scanned = 0
+        # Discovered once upfront (not lazily per-skill in the loop below) so
+        # a collection scan's progress table can show every row's real
+        # "done/total" — including still-Queued ones — from the very first
+        # frame, instead of totals only appearing once each skill starts.
+        bundled_files_by_dir = {d: discover_bundled_files(d) for d in skill_dirs}
         # A collection scan gets a live-updating progress table on a real
         # terminal; everything else (non-TTY/CI, --quiet, or a single skill)
         # keeps the plain print-line fallback below.
         show_live_progress = total > 1 and not args.quiet and stderr_console.is_terminal
         progress_cm = (
-            CollectionProgress(stderr_console, [d.name for d in skill_dirs]) if show_live_progress else nullcontext()
+            CollectionProgress(
+                stderr_console,
+                [d.name for d in skill_dirs],
+                [len(bundled_files_by_dir[d]) for d in skill_dirs],
+            )
+            if show_live_progress
+            else nullcontext()
         )
         with progress_cm as progress:
             for idx, skill_dir in enumerate(skill_dirs, start=1):
@@ -254,7 +265,7 @@ def _run_scan(args: argparse.Namespace) -> int:
                         continue
 
                 skill_label = metadata.name or skill_dir.name
-                bundled_files = discover_bundled_files(skill_dir)
+                bundled_files = bundled_files_by_dir[skill_dir]
 
                 # Only for collection scans (total > 1) — a single-skill scan doesn't
                 # need progress noise, but scanning a repo with dozens or hundreds of
@@ -262,15 +273,15 @@ def _run_scan(args: argparse.Namespace) -> int:
                 # while building this tool. --quiet suppresses this chatter but never
                 # errors/warnings.
                 if progress:
-                    progress.start(idx - 1, skill_label, len(bundled_files))
+                    progress.start(idx - 1, skill_label)
                 elif total > 1 and not args.quiet:
                     stderr_console.print(f"[{idx}/{total}] scanning {skill_label}...")
 
-                def _on_file(filename: str) -> None:
+                def _on_file(filename: str, running_issues: int) -> None:
                     nonlocal total_files_scanned
                     total_files_scanned += 1
                     if progress:
-                        progress.advance_file(idx - 1)
+                        progress.advance_file(idx - 1, running_issues)
                     else:
                         advance_file(filename)
 
@@ -385,7 +396,7 @@ def _run_scan(args: argparse.Namespace) -> int:
                 )
                 reports.append(report)
                 if progress:
-                    progress.finish(idx - 1, report.risk_level, report.risk_score)
+                    progress.finish(idx - 1, report.risk_level, report.risk_score, len(report.findings))
                 elif total > 1 and not args.quiet:
                     stderr_console.print(f"    -> {report.risk_level.value.upper()} ({report.risk_score})")
 
