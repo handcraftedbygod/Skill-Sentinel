@@ -15,14 +15,17 @@ from __future__ import annotations
 
 import importlib.metadata
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 from rich.console import Console
+from rich.live import Live
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TaskProgressColumn, TextColumn
+from rich.progress_bar import ProgressBar
 from rich.table import Table
 from rich.text import Text
 
 from sentinel.findings import Severity
-from sentinel.report import RISK_LEVEL_GUIDANCE, Report, collection_risk
+from sentinel.report import Report, collection_risk, risk_guidance
 
 SEVERITY_STYLE = {
     Severity.LOW: "green",
@@ -130,6 +133,100 @@ def print_warning(console: Console, message: str) -> None:
     console.print(f"warning: {message}", style="yellow")
 
 
+@dataclass
+class SkillProgress:
+    name: str
+    status: str = "Queued"  # "Queued" | "Scanning" | "Skipped" | "Done"
+    risk_level: Severity | None = None
+    risk_score: int | None = None
+    files_done: int = 0
+    files_total: int = 0
+
+
+_STATUS_TEXT = {
+    "Queued": ("◦ Queued", "dim"),
+    "Scanning": ("⟳ Scanning", "gold3"),
+    "Skipped": ("- Skipped", "dim"),
+    "Done": ("✓ Done", "green"),
+}
+
+
+def _progress_cell(done: int, total: int):
+    # A grid (not a bare ProgressBar) so the bar and its percentage render
+    # side by side in one cell, matching the fill-as-it-scans look of the
+    # single-skill file_scan_progress bar above.
+    if total <= 0:
+        return Text("·", style="dim")
+    grid = Table.grid(padding=(0, 1))
+    grid.add_column()
+    grid.add_column(justify="right", width=4)
+    grid.add_row(ProgressBar(total=total, completed=done, width=18), f"{int(done / total * 100)}%")
+    return grid
+
+
+def _build_progress_table(rows: list[SkillProgress]) -> Table:
+    table = Table(show_header=True, header_style="bold cyan", border_style="dim", pad_edge=True, expand=False)
+    table.add_column("Skill")
+    table.add_column("Status")
+    table.add_column("Files")
+    table.add_column("Risk")
+    table.add_column("Progress")
+    for row in rows:
+        label, style = _STATUS_TEXT[row.status]
+        if row.risk_level is not None:
+            risk_text = Text(f"{row.risk_level.value.upper()} ({row.risk_score})", style=SEVERITY_STYLE[row.risk_level])
+        else:
+            risk_text = Text("·", style="dim")
+        files_text = Text(f"{row.files_done}/{row.files_total}" if row.files_total else "·", style="dim")
+        table.add_row(row.name, Text(label, style=style), files_text, risk_text, _progress_cell(row.files_done, row.files_total))
+    return table
+
+
+class CollectionProgress:
+    """Live-updating stderr table for a multi-skill collection scan. Only
+    meaningful on a real terminal — callers should check `console.is_terminal`
+    themselves and fall back to plain print lines otherwise (Live is silent
+    off-TTY anyway when transient, so this doesn't guard against that itself)."""
+
+    def __init__(self, console: Console, skill_names: list[str]):
+        self._rows = [SkillProgress(name) for name in skill_names]
+        self._live = Live(_build_progress_table(self._rows), console=console, transient=True, refresh_per_second=8)
+
+    def __enter__(self) -> "CollectionProgress":
+        self._live.__enter__()
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self._live.__exit__(*exc_info)
+
+    def _refresh(self) -> None:
+        self._live.update(_build_progress_table(self._rows))
+
+    def start(self, idx: int, name: str, total_files: int) -> None:
+        row = self._rows[idx]
+        row.name = name
+        row.status = "Scanning"
+        row.files_total = total_files
+        row.files_done = 0
+        self._refresh()
+
+    def advance_file(self, idx: int) -> None:
+        self._rows[idx].files_done += 1
+        self._refresh()
+
+    def skip(self, idx: int) -> None:
+        self._rows[idx].status = "Skipped"
+        self._refresh()
+
+    def finish(self, idx: int, risk_level: Severity, risk_score: int) -> None:
+        row = self._rows[idx]
+        row.status = "Done"
+        row.risk_level = risk_level
+        row.risk_score = risk_score
+        row.files_done = row.files_total
+        self._refresh()
+
+
 @contextmanager
 def busy_status(console: Console, message: str, *, quiet: bool):
     """Spinner (TTY) or a single plain line (non-TTY) around a step that can
@@ -232,7 +329,7 @@ def print_report(console: Console, report: Report) -> None:
         end="",
     )
     console.print(f"({report.risk_level.value.upper()})", style=SEVERITY_STYLE.get(report.risk_level))
-    console.print(RISK_LEVEL_GUIDANCE[report.risk_level], style="dim")
+    console.print(risk_guidance(report), style="dim")
     console.print()
     console.print(_scan_summary_grid(report))
     console.print()
@@ -263,7 +360,7 @@ def print_summary_table(console: Console, reports: list[Report]) -> None:
         f"({worst.risk_level.value.upper()}, driven by {worst.skill_name or worst.skill_path})",
         style=SEVERITY_STYLE.get(worst.risk_level),
     )
-    console.print(RISK_LEVEL_GUIDANCE[worst.risk_level], style="dim")
+    console.print(risk_guidance(worst), style="dim")
 
 
 def print_reports_generated(console: Console, *, html: str, json: str, markdown: str) -> None:

@@ -6,6 +6,7 @@ import io
 from rich.console import Console
 
 from sentinel.console import (
+    CollectionProgress,
     busy_status,
     file_scan_progress,
     maybe_print_banner,
@@ -14,7 +15,7 @@ from sentinel.console import (
     print_welcome,
 )
 from sentinel.findings import Confidence, Finding, Severity
-from sentinel.report import Report
+from sentinel.report import Report, risk_guidance
 
 
 def _console(*, no_color=False):
@@ -131,7 +132,25 @@ def test_summary_table_shows_overall_risk_score_and_guidance():
     print_summary_table(console, [low_report, critical_report])
     out = buf.getvalue()
     assert "Overall risk score: 30 (CRITICAL, driven by dangerous-skill)" in out
-    assert "investigated" in out  # RISK_LEVEL_GUIDANCE[CRITICAL]
+    assert risk_guidance(critical_report) in out
+
+
+def test_collection_progress_transitions_and_shows_file_progress():
+    console, buf = _console(no_color=True)
+    with CollectionProgress(console, ["skill-a", "skill-b", "skill-c"]) as progress:
+        progress.start(0, "skill-a", 4)
+        progress.advance_file(0)
+        progress.advance_file(0)
+        progress.skip(1)
+        progress.start(2, "skill-c", 2)
+        progress.finish(2, Severity.CRITICAL, 30)
+    out = buf.getvalue()
+    assert "skill-a" in out
+    assert "Skipped" in out
+    assert "Done" in out
+    assert "CRITICAL (30)" in out
+    assert "2/4" in out  # skill-a's file progress as of its last update
+    assert "50%" in out  # skill-a: 2/4 files
 
 
 def test_busy_status_quiet_suppresses_output(capsys):

@@ -30,16 +30,6 @@ SEVERITY_WEIGHT = {
     Severity.CRITICAL: 15,
 }
 
-# A bare "MEDIUM" or a number like "24" means nothing to a reader without a
-# baseline — this is the one-line answer to "is that bad?" shown next to the
-# score in the CLI, Markdown, and HTML reports alike.
-RISK_LEVEL_GUIDANCE: dict[Severity, str] = {
-    Severity.LOW: "Nothing concerning found — safe to use as-is.",
-    Severity.MEDIUM: "A few things worth a human look, but nothing that should block normal use.",
-    Severity.HIGH: "Review the findings below before trusting this skill with real data or credentials.",
-    Severity.CRITICAL: "Do not run this skill until every finding below has been investigated.",
-}
-
 SECRET_LOOKING_RE_PARTS = ("key", "token", "secret", "password", "credential", "api_key")
 
 # Findings that come from reading file content, not from running the skill —
@@ -82,6 +72,31 @@ CATEGORY_METADATA: dict[str, tuple[Confidence, str]] = {
     "differential_behavior_change": (Confidence.MEDIUM, "T1497"),
     "network_connection": (Confidence.LOW, "T1071"),
     "semantic_review": (Confidence.MEDIUM, ""),
+}
+
+# Plain-language names for what each category means, used to tell a reader
+# what specifically was flagged (see risk_guidance()) instead of leaving them
+# to decode category slugs like "skill_md_remote_exec_instruction" themselves.
+FINDING_CATEGORY_LABELS: dict[str, str] = {
+    "base64_blob": "long base64-looking strings",
+    "eval_exec_decode": "exec()/eval() of decoded content",
+    "hidden_executable": "a hidden executable file",
+    "skill_md_remote_exec_instruction": "instructions to pipe a remote download into a shell",
+    "skill_md_exfil_instruction": "instructions to exfiltrate data",
+    "skill_md_decode_exec_instruction": "instructions to decode and execute content",
+    "frontmatter_broad_tool_grant": "an overly broad tool grant",
+    "frontmatter_sensitive_path_scope": "declared access to sensitive file paths",
+    "network_request": "unexpected outbound network requests",
+    "network_connection": "unexpected outbound connection attempts",
+    "out_of_scope_file_access": "file access outside the skill's own directory",
+    "unexpected_subprocess": "an unexpected subprocess",
+    "tls_handshake_failed": "a failed TLS handshake (possible certificate pinning)",
+    "sandbox_timeout": "a sandbox timeout",
+    "sandbox_no_trace_data": "a sandbox run that produced no trace data",
+    "sandbox_not_attempted": "no dynamic behavior observed",
+    "no_skill_md": "no SKILL.md found",
+    "differential_behavior_change": "behavior that changed under different sandbox conditions",
+    "semantic_review": "a concern flagged by semantic instruction review",
 }
 
 # Below this many near-identical findings (same directory for file opens, same
@@ -393,6 +408,34 @@ def collection_risk(reports: list[Report]) -> Report:
     return max(reports, key=lambda r: (r.risk_level.rank, r.risk_score))
 
 
+def _join_with_and(items: list[str], limit: int = 4) -> str:
+    if len(items) > limit:
+        items = items[:limit] + [f"{len(items) - limit} more"]
+    if len(items) == 1:
+        return items[0]
+    return ", ".join(items[:-1]) + f", and {items[-1]}"
+
+
+_RISK_LEVEL_VERDICT = {
+    Severity.LOW: "this skill looks safe to use",
+    Severity.MEDIUM: "worth a human look before you trust this skill, but nothing found should block normal use",
+    Severity.HIGH: "review these findings before trusting this skill with real data or credentials — not "
+    "confirmed safe to use",
+    Severity.CRITICAL: "do not use this skill until these findings have been investigated",
+}
+
+
+def risk_guidance(report: Report) -> str:
+    """One line naming what actually drove the risk verdict and stating,
+    plainly, whether the skill looks safe to use — a bare "MEDIUM (3)" or an
+    unlabeled findings table leaves the reader to work both of those out for
+    themselves."""
+    if not report.findings:
+        return "No concerning behavior found — this skill looks safe to use."
+    labels = sorted({FINDING_CATEGORY_LABELS.get(f.category, f.category.replace("_", " ")) for f in report.findings})
+    return f"Flagged for {_join_with_and(labels)} — {_RISK_LEVEL_VERDICT[report.risk_level]}."
+
+
 def build_report(
     skill_dir: Path,
     metadata: SkillMetadata,
@@ -444,7 +487,7 @@ def render_markdown(report: Report) -> str:
         lines.append("")
     lines.append(f"**Risk score:** {report.risk_score} ({report.risk_level.value.upper()})")
     lines.append("")
-    lines.append(f"_{RISK_LEVEL_GUIDANCE[report.risk_level]}_")
+    lines.append(f"_{risk_guidance(report)}_")
     lines.append("")
     lines.append(f"**Invocations attempted:** {', '.join(f'`{i}`' for i in report.invocations) or '(none)'}")
     lines.append("")
@@ -543,7 +586,7 @@ def render_markdown_multi(reports: list[Report]) -> str:
         f"# SkillTrace: {len(reports)} skills found in this repository\n\n"
         f"**Overall risk score:** {worst.risk_score} ({worst.risk_level.value.upper()}, driven by "
         f"{worst.skill_name or worst.skill_path})\n\n"
-        f"_{RISK_LEVEL_GUIDANCE[worst.risk_level]}_"
+        f"_{risk_guidance(worst)}_"
     )
     parts = [header]
     parts.extend(render_markdown(r) for r in reports)
@@ -655,7 +698,7 @@ def _report_body_html(report: Report) -> str:
         f"{description}"
         f'<div class="risk-badge" style="background:{risk_color}">'
         f"{report.risk_level.value.upper()} ({report.risk_score})</div>"
-        f'<p class="description">{html.escape(RISK_LEVEL_GUIDANCE[report.risk_level])}</p>'
+        f'<p class="description">{html.escape(risk_guidance(report))}</p>'
         f'<p class="invocations">Invocations attempted: {invocations}</p>'
         f'<p class="invocations">Pre-authorized tools (allowed-tools): {allowed_tools}</p>'
         f"{''.join(sections)}"
@@ -681,7 +724,7 @@ def render_html_multi(reports: list[Report]) -> str:
             f'<div class="risk-badge" style="background:{SEVERITY_COLOR[worst.risk_level.value]}">'
             f"Overall: {worst.risk_level.value.upper()} ({worst.risk_score}), driven by "
             f"{html.escape(worst.skill_name or worst.skill_path)}</div>"
-            f'<p class="description">{html.escape(RISK_LEVEL_GUIDANCE[worst.risk_level])}</p>'
+            f'<p class="description">{html.escape(risk_guidance(worst))}</p>'
         )
         rows = "".join(
             f"<tr><td>{html.escape(r.skill_name or r.skill_path)}</td>"

@@ -5,7 +5,6 @@ from pathlib import Path
 
 from sentinel.findings import Confidence, Finding, Severity
 from sentinel.report import (
-    RISK_LEVEL_GUIDANCE,
     Report,
     build_report,
     collection_risk,
@@ -15,6 +14,7 @@ from sentinel.report import (
     render_json,
     render_markdown,
     render_markdown_multi,
+    risk_guidance,
     sandbox_result_findings,
     sandbox_result_signature,
 )
@@ -335,17 +335,51 @@ def test_collection_risk_picks_the_single_riskiest_skill():
 
 
 def test_render_markdown_multi_shows_overall_risk_and_guidance():
-    reports = [_clean_report("safe-skill"), _risky_report("dangerous-skill", Severity.CRITICAL, 30)]
+    dangerous = _risky_report("dangerous-skill", Severity.CRITICAL, 30)
+    reports = [_clean_report("safe-skill"), dangerous]
     output = render_markdown_multi(reports)
     assert "**Overall risk score:** 30 (CRITICAL, driven by dangerous-skill)" in output
-    assert RISK_LEVEL_GUIDANCE[Severity.CRITICAL] in output
+    assert risk_guidance(dangerous) in output
 
 
 def test_render_html_multi_shows_overall_risk_badge():
-    reports = [_clean_report("safe-skill"), _risky_report("dangerous-skill", Severity.CRITICAL, 30)]
+    dangerous = _risky_report("dangerous-skill", Severity.CRITICAL, 30)
+    reports = [_clean_report("safe-skill"), dangerous]
     output = render_html_multi(reports)
     assert "Overall: CRITICAL (30), driven by dangerous-skill" in output
-    assert RISK_LEVEL_GUIDANCE[Severity.CRITICAL] in output
+    assert risk_guidance(dangerous) in output
+
+
+def test_risk_guidance_names_flagged_categories_and_gives_a_verdict():
+    report = _risky_report("dangerous-skill", Severity.CRITICAL, 30)
+    guidance = risk_guidance(report)
+    assert "unexpected outbound network requests" in guidance
+    assert "do not use this skill" in guidance
+
+
+def test_risk_guidance_clean_report_says_safe_to_use():
+    assert "safe to use" in risk_guidance(_clean_report())
+
+
+def test_risk_guidance_caps_listed_categories():
+    categories = [
+        "base64_blob",
+        "eval_exec_decode",
+        "hidden_executable",
+        "out_of_scope_file_access",
+        "unexpected_subprocess",
+    ]
+    report = Report(
+        skill_path="/tmp/many-flags",
+        skill_name="many-flags",
+        skill_description=None,
+        findings=[Finding(category=c, severity=Severity.MEDIUM, summary="x") for c in categories],
+        risk_score=15,
+        risk_level=Severity.MEDIUM,
+        invocations=[],
+    )
+    guidance = risk_guidance(report)
+    assert "1 more" in guidance
 
 
 def _metadata(name: str = "test-skill", allowed_tools=None) -> SkillMetadata:
