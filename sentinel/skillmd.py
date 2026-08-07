@@ -41,6 +41,15 @@ PLACEHOLDER_TOKEN_RE = re.compile(r"<[A-Za-z_][\w-]*>|__[A-Z][A-Z0-9_]*__|(?<!\$
 # a broadening for its own sake.
 KNOWN_SKILL_INSTALL_DIRS = {".claude", ".agents", ".gemini", ".cursor", ".codex", ".openclaw", ".clawhub"}
 
+# Conventional test-scaffolding directory names, not real skill collections.
+# A SKILL.md that lives here belongs to some other project's own test suite -
+# e.g. a coding-agent package's own .../test/fixtures/skills/invalid-yaml/
+# SKILL.md, deliberately malformed to test *its* parser's error handling, is
+# never something a real agent loads. Treating it as a scan candidate did
+# nothing but produce a "malformed YAML" warning about content that was never
+# meant to be valid — noise repeated on every repo that vendors that package.
+TEST_SCAFFOLDING_DIR_NAMES = {"test", "tests", "__tests__", "fixtures", "testdata", "spec", "__mocks__"}
+
 
 class SkillMdNotFoundError(Exception):
     """Raised when a candidate skill directory has no SKILL.md."""
@@ -217,7 +226,9 @@ def discover_skill_directories(root: Path) -> list[Path]:
     """Find every directory under root that directly contains a SKILL.md
     (case-insensitive), skipping hidden/dot directories — except the known
     agent-tool skill-install conventions (KNOWN_SKILL_INSTALL_DIRS), which are
-    real installed-skill locations, not VCS/CI/build-artifact noise.
+    real installed-skill locations, not VCS/CI/build-artifact noise — and
+    skipping conventional test-scaffolding directories (TEST_SCAFFOLDING_DIR_NAMES),
+    which hold some other project's own test fixtures, not real skills.
 
     Most repos are a single skill (SKILL.md at root, returned as a 1-item list).
     Some are collections — one repo bundling many skills, each in its own
@@ -226,7 +237,12 @@ def discover_skill_directories(root: Path) -> list[Path]:
     """
     found = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".") or d in KNOWN_SKILL_INSTALL_DIRS]
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if (not d.startswith(".") or d in KNOWN_SKILL_INSTALL_DIRS)
+            and d.lower() not in TEST_SCAFFOLDING_DIR_NAMES
+        ]
         if any(f.lower() == "skill.md" for f in filenames):
             found.append(Path(dirpath))
     return sorted(found)

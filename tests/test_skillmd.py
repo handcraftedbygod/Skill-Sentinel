@@ -60,6 +60,20 @@ def test_skill_md_under_a_hidden_directory_is_not_a_real_skill(tmp_path):
     assert discover_skill_directories(tmp_path) == [tmp_path]
 
 
+def test_skill_md_under_a_test_fixtures_directory_is_not_a_real_skill(tmp_path):
+    # Regression case: a repo vendoring a "coding-agent"-style package whose
+    # own test suite ships a deliberately-malformed
+    # .../test/fixtures/skills/invalid-yaml/SKILL.md (used to test *that*
+    # package's own parser) must not surface as a scan candidate — it was
+    # never meant to be a valid, loadable skill in the first place.
+    (tmp_path / "SKILL.md").write_text("---\nname: real\n---\n", encoding="utf-8")
+    fixture = tmp_path / "packages" / "coding-agent" / "test" / "fixtures" / "skills" / "invalid-yaml"
+    fixture.mkdir(parents=True)
+    (fixture / "SKILL.md").write_text("---\nname: [unclosed\n---\n", encoding="utf-8")
+
+    assert discover_skill_directories(tmp_path) == [tmp_path]
+
+
 def test_skill_in_known_agent_tool_install_dir_is_found(tmp_path):
     # Regression test: found via snyk-labs/toxicskills-goof (a third-party
     # security research sample) — every skill in that repo, including the
