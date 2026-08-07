@@ -385,6 +385,14 @@ def compute_risk(findings: list[Finding]) -> tuple[int, Severity]:
     return score, level
 
 
+def collection_risk(reports: list[Report]) -> Report:
+    """The single riskiest skill in a multi-skill scan — summing scores across
+    dozens/hundreds of skills would scale with collection size rather than with
+    how bad any one skill actually is, so "overall" here means worst-case, the
+    same reasoning NEAR_DUPLICATE_THRESHOLD above uses to avoid inflated totals."""
+    return max(reports, key=lambda r: (r.risk_level.rank, r.risk_score))
+
+
 def build_report(
     skill_dir: Path,
     metadata: SkillMetadata,
@@ -530,7 +538,14 @@ def render_json_multi(reports: list[Report]) -> str:
 def render_markdown_multi(reports: list[Report]) -> str:
     if len(reports) == 1:
         return render_markdown(reports[0])
-    parts = [f"# SkillTrace: {len(reports)} skills found in this repository"]
+    worst = collection_risk(reports)
+    header = (
+        f"# SkillTrace: {len(reports)} skills found in this repository\n\n"
+        f"**Overall risk score:** {worst.risk_score} ({worst.risk_level.value.upper()}, driven by "
+        f"{worst.skill_name or worst.skill_path})\n\n"
+        f"_{RISK_LEVEL_GUIDANCE[worst.risk_level]}_"
+    )
+    parts = [header]
     parts.extend(render_markdown(r) for r in reports)
     return "\n\n---\n\n".join(parts)
 
@@ -661,6 +676,13 @@ def render_html_multi(reports: list[Report]) -> str:
         body = f"<h1>{html.escape(title)}</h1>{_report_body_html(r)}"
     else:
         title = f"SkillTrace: {len(reports)} skills"
+        worst = collection_risk(reports)
+        overall_risk = (
+            f'<div class="risk-badge" style="background:{SEVERITY_COLOR[worst.risk_level.value]}">'
+            f"Overall: {worst.risk_level.value.upper()} ({worst.risk_score}), driven by "
+            f"{html.escape(worst.skill_name or worst.skill_path)}</div>"
+            f'<p class="description">{html.escape(RISK_LEVEL_GUIDANCE[worst.risk_level])}</p>'
+        )
         rows = "".join(
             f"<tr><td>{html.escape(r.skill_name or r.skill_path)}</td>"
             f'<td><span class="badge" style="background:{SEVERITY_COLOR[r.risk_level.value]}">'
@@ -676,7 +698,7 @@ def render_html_multi(reports: list[Report]) -> str:
             f"{r.risk_level.value.upper()} ({r.risk_score})</summary>{_report_body_html(r)}</details>"
             for r in reports
         )
-        body = f"<h1>{html.escape(title)}</h1>{summary_table}{details}"
+        body = f"<h1>{html.escape(title)}</h1>{overall_risk}{summary_table}{details}"
 
     return (
         "<!doctype html><html><head><meta charset=\"utf-8\">"

@@ -15,16 +15,14 @@ from __future__ import annotations
 
 import importlib.metadata
 from contextlib import contextmanager
-from dataclasses import dataclass
 
 from rich.console import Console
-from rich.live import Live
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TaskProgressColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
 
 from sentinel.findings import Severity
-from sentinel.report import RISK_LEVEL_GUIDANCE, Report
+from sentinel.report import RISK_LEVEL_GUIDANCE, Report, collection_risk
 
 SEVERITY_STYLE = {
     Severity.LOW: "green",
@@ -130,70 +128,6 @@ def print_error(console: Console, message: str) -> None:
 
 def print_warning(console: Console, message: str) -> None:
     console.print(f"warning: {message}", style="yellow")
-
-
-@dataclass
-class SkillProgress:
-    name: str
-    status: str = "Queued"  # "Queued" | "Scanning" | "Skipped" | "Done"
-    risk_level: Severity | None = None
-    risk_score: int | None = None
-
-
-_STATUS_TEXT = {
-    "Queued": ("◦ Queued", "dim"),
-    "Scanning": ("⟳ Scanning", "yellow"),
-    "Skipped": ("- Skipped", "dim"),
-    "Done": ("✓ Done", "green"),
-}
-
-
-def _build_progress_table(rows: list[SkillProgress]) -> Table:
-    table = Table(show_header=True, header_style="bold cyan", border_style="dim", pad_edge=True, expand=False)
-    table.add_column("Skill")
-    table.add_column("Status")
-    table.add_column("Risk")
-    for row in rows:
-        label, style = _STATUS_TEXT[row.status]
-        if row.risk_level is not None:
-            risk_text = Text(f"{row.risk_level.value.upper()} ({row.risk_score})", style=SEVERITY_STYLE[row.risk_level])
-        else:
-            risk_text = Text("·", style="dim")
-        table.add_row(row.name, Text(label, style=style), risk_text)
-    return table
-
-
-class CollectionProgress:
-    """Live-updating stderr table for a multi-skill collection scan. Only
-    meaningful on a real terminal — callers should check `console.is_terminal`
-    themselves and fall back to plain print lines otherwise (Live is silent
-    off-TTY anyway when transient, so this doesn't guard against that itself)."""
-
-    def __init__(self, console: Console, skill_names: list[str]):
-        self._rows = [SkillProgress(name) for name in skill_names]
-        self._live = Live(_build_progress_table(self._rows), console=console, transient=True, refresh_per_second=4)
-
-    def __enter__(self) -> "CollectionProgress":
-        self._live.__enter__()
-        return self
-
-    def __exit__(self, *exc_info) -> None:
-        self._live.__exit__(*exc_info)
-
-    def start(self, idx: int, name: str) -> None:
-        self._rows[idx].name = name
-        self._rows[idx].status = "Scanning"
-        self._live.update(_build_progress_table(self._rows))
-
-    def skip(self, idx: int) -> None:
-        self._rows[idx].status = "Skipped"
-        self._live.update(_build_progress_table(self._rows))
-
-    def finish(self, idx: int, risk_level: Severity, risk_score: int) -> None:
-        self._rows[idx].status = "Done"
-        self._rows[idx].risk_level = risk_level
-        self._rows[idx].risk_score = risk_score
-        self._live.update(_build_progress_table(self._rows))
 
 
 @contextmanager
@@ -321,6 +255,15 @@ def print_summary_table(console: Console, reports: list[Report]) -> None:
             style=SEVERITY_STYLE.get(r.risk_level),
         )
     console.print(table)
+
+    worst = collection_risk(reports)
+    console.print()
+    console.print(f"Overall risk score: {worst.risk_score} ", style=SEVERITY_STYLE.get(worst.risk_level), end="")
+    console.print(
+        f"({worst.risk_level.value.upper()}, driven by {worst.skill_name or worst.skill_path})",
+        style=SEVERITY_STYLE.get(worst.risk_level),
+    )
+    console.print(RISK_LEVEL_GUIDANCE[worst.risk_level], style="dim")
 
 
 def print_reports_generated(console: Console, *, html: str, json: str, markdown: str) -> None:

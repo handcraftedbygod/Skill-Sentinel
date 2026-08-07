@@ -5,13 +5,16 @@ from pathlib import Path
 
 from sentinel.findings import Confidence, Finding, Severity
 from sentinel.report import (
+    RISK_LEVEL_GUIDANCE,
     Report,
     build_report,
+    collection_risk,
     diff_sandbox_results,
     render_html,
     render_html_multi,
     render_json,
     render_markdown,
+    render_markdown_multi,
     sandbox_result_findings,
     sandbox_result_signature,
 )
@@ -308,6 +311,41 @@ def test_render_html_multi_shows_summary_table_and_per_skill_sections():
     assert output.count("<details>") == 2
     assert "skill-a" in output
     assert "skill-b" in output
+
+
+def _risky_report(name: str, severity: Severity, score: int) -> Report:
+    return Report(
+        skill_path=f"/tmp/{name}",
+        skill_name=name,
+        skill_description=None,
+        findings=[Finding(category="network_request", severity=severity, summary="x")],
+        risk_score=score,
+        risk_level=severity,
+        invocations=[],
+    )
+
+
+def test_collection_risk_picks_the_single_riskiest_skill():
+    # Sum-across-skills would scale with collection size rather than with how
+    # bad any one skill actually is - the worst single skill should win, not
+    # some inflated aggregate over dozens/hundreds of harmless skills.
+    reports = [_clean_report("safe-one"), _risky_report("dangerous-one", Severity.CRITICAL, 30), _clean_report("safe-two")]
+    worst = collection_risk(reports)
+    assert worst.skill_name == "dangerous-one"
+
+
+def test_render_markdown_multi_shows_overall_risk_and_guidance():
+    reports = [_clean_report("safe-skill"), _risky_report("dangerous-skill", Severity.CRITICAL, 30)]
+    output = render_markdown_multi(reports)
+    assert "**Overall risk score:** 30 (CRITICAL, driven by dangerous-skill)" in output
+    assert RISK_LEVEL_GUIDANCE[Severity.CRITICAL] in output
+
+
+def test_render_html_multi_shows_overall_risk_badge():
+    reports = [_clean_report("safe-skill"), _risky_report("dangerous-skill", Severity.CRITICAL, 30)]
+    output = render_html_multi(reports)
+    assert "Overall: CRITICAL (30), driven by dangerous-skill" in output
+    assert RISK_LEVEL_GUIDANCE[Severity.CRITICAL] in output
 
 
 def _metadata(name: str = "test-skill", allowed_tools=None) -> SkillMetadata:

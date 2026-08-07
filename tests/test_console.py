@@ -6,7 +6,6 @@ import io
 from rich.console import Console
 
 from sentinel.console import (
-    CollectionProgress,
     busy_status,
     file_scan_progress,
     maybe_print_banner,
@@ -120,18 +119,19 @@ def test_summary_table_lists_all_skills():
     assert "skill-two" in out
 
 
-def test_collection_progress_transitions_queued_scanning_skipped_done():
+def test_summary_table_shows_overall_risk_score_and_guidance():
+    low_report = _report("minor thing", "quiet-skill")
+    low_report.risk_score = 1
+    low_report.risk_level = Severity.LOW
+    critical_report = _report("bad thing", "dangerous-skill")
+    critical_report.risk_score = 30
+    critical_report.risk_level = Severity.CRITICAL
+
     console, buf = _console(no_color=True)
-    with CollectionProgress(console, ["skill-a", "skill-b", "skill-c"]) as progress:
-        progress.start(0, "skill-a")
-        progress.skip(1)
-        progress.start(2, "skill-c")
-        progress.finish(2, Severity.CRITICAL, 30)
+    print_summary_table(console, [low_report, critical_report])
     out = buf.getvalue()
-    assert "skill-a" in out
-    assert "Skipped" in out
-    assert "Done" in out
-    assert "CRITICAL (30)" in out
+    assert "Overall risk score: 30 (CRITICAL, driven by dangerous-skill)" in out
+    assert "investigated" in out  # RISK_LEVEL_GUIDANCE[CRITICAL]
 
 
 def test_busy_status_quiet_suppresses_output(capsys):

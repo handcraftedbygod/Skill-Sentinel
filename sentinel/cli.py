@@ -9,7 +9,6 @@ import tempfile
 import textwrap
 import time
 from collections import Counter
-from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 
@@ -17,7 +16,6 @@ from rich.console import Console
 from rich_argparse import RawDescriptionRichHelpFormatter, RichHelpFormatter
 
 from sentinel.console import (
-    CollectionProgress,
     busy_status,
     file_scan_progress,
     make_console,
@@ -223,169 +221,149 @@ def _run_scan(args: argparse.Namespace) -> int:
         reports = []
         total = len(skill_dirs)
         total_files_scanned = 0
-        # A collection scan gets a live-updating progress table on a real
-        # terminal; everything else (non-TTY/CI, --quiet, or a single skill)
-        # keeps the plain print-line fallback below.
-        show_live_progress = total > 1 and not args.quiet and stderr_console.is_terminal
-        progress_cm = (
-            CollectionProgress(stderr_console, [d.name for d in skill_dirs]) if show_live_progress else nullcontext()
-        )
-        with progress_cm as progress:
-            for idx, skill_dir in enumerate(skill_dirs, start=1):
-                if raw_directory_scan:
-                    metadata = SkillMetadata(
-                        name=None,
-                        description=None,
-                        license=None,
-                        allowed_tools=None,
-                        when_to_use=None,
-                        paths=None,
-                        raw_frontmatter={},
-                        body="",
-                        path=skill_dir,
+        for idx, skill_dir in enumerate(skill_dirs, start=1):
+            if raw_directory_scan:
+                metadata = SkillMetadata(
+                    name=None,
+                    description=None,
+                    license=None,
+                    allowed_tools=None,
+                    when_to_use=None,
+                    paths=None,
+                    raw_frontmatter={},
+                    body="",
+                    path=skill_dir,
+                )
+            else:
+                try:
+                    metadata = parse_skill_md(skill_dir)
+                except (SkillMdNotFoundError, SkillMdParseError) as exc:
+                    print_warning(stderr_console, f"skipping {skill_dir}: {exc}")
+                    continue
+
+            # Only for collection scans (total > 1) — a single-skill scan doesn't
+            # need progress noise, but scanning a repo with dozens or hundreds of
+            # skills with zero visibility into where it is was a real pain point
+            # while building this tool. --quiet suppresses this chatter but never
+            # errors/warnings.
+            skill_label = metadata.name or skill_dir.name
+            if total > 1 and not args.quiet:
+                stderr_console.print(f"[{idx}/{total}] scanning {skill_label}...")
+
+            bundled_files = discover_bundled_files(skill_dir)
+
+            def _on_file(filename: str) -> None:
+                nonlocal total_files_scanned
+                total_files_scanned += 1
+                advance_file(filename)
+
+            with file_scan_progress(stderr_console, len(bundled_files), quiet=args.quiet) as advance_file:
+                heuristic_findings = run_heuristics(skill_dir, metadata, on_file=_on_file)
+
+            if raw_directory_scan:
+                heuristic_findings = heuristic_findings + [
+                    Finding(
+                        category="no_skill_md",
+                        severity=Severity.MEDIUM,
+                        summary=f"No SKILL.md found anywhere under {skill_dir} — this doesn't look "
+                        "like an agent skill (Claude, Cursor, or Codex). Static checks still ran "
+                        "against the raw directory contents, but there's no declared usage example "
+                        "or metadata to sandbox-run or evaluate against.",
+                        source="cli",
                     )
-                else:
-                    try:
-                        metadata = parse_skill_md(skill_dir)
-                    except (SkillMdNotFoundError, SkillMdParseError) as exc:
-                        print_warning(stderr_console, f"skipping {skill_dir}: {exc}")
-                        if progress:
-                            progress.skip(idx - 1)
-                        continue
+                ]
+            candidates = build_invocation_candidates(skill_dir, bundled_files, metadata.body, args.invoke)
 
-                # Only for collection scans (total > 1) — a single-skill scan doesn't
-                # need progress noise, but scanning a repo with dozens or hundreds of
-                # skills with zero visibility into where it is was a real pain point
-                # while building this tool. --quiet suppresses this chatter but never
-                # errors/warnings.
-                skill_label = metadata.name or skill_dir.name
-                if progress:
-                    progress.start(idx - 1, skill_label)
-                elif total > 1 and not args.quiet:
-                    stderr_console.print(f"[{idx}/{total}] scanning {skill_label}...")
+            semantic_review_ran = False
+            if args.semantic_review:
+                try:
+                    heuristic_findings = heuristic_findings + review_skill_instructions(
+                        metadata.name,
+                        metadata.description,
+                        metadata.body,
+                        when_to_use=metadata.when_to_use,
+                        source=str(skill_dir),
+                    )
+                    semantic_review_ran = True
+                except SemanticReviewError as exc:
+                    print_warning(stderr_console, f"semantic review skipped for {skill_dir}: {exc}")
 
-                bundled_files = discover_bundled_files(skill_dir)
+            sandbox_results = None
+            if not args.no_sandbox:
+                # run_skill_in_sandbox() below also calls ensure_docker_available()
+                # itself (it's a public function other callers may use directly) —
+                # this call exists only to fail fast with a distinct exit code
+                # before doing any candidate-building work, not to avoid the
+                # (cheap, subprocess-level) check that follows.
+                try:
+                    ensure_docker_available()
+                except DockerUnavailableError as exc:
+                    print_error(stderr_console, str(exc))
+                    return 3
 
-                # A collection scan's Live table already owns the terminal —
-                # Rich doesn't support a second, nested Live display, so the
-                # visible bar only renders for a single-skill scan; the count
-                # itself is still tracked either way for the final summary.
-                def _on_file(filename: str) -> None:
-                    nonlocal total_files_scanned
-                    total_files_scanned += 1
-                    advance_file(filename)
-
-                with file_scan_progress(
-                    stderr_console, len(bundled_files), quiet=args.quiet or progress is not None
-                ) as advance_file:
-                    heuristic_findings = run_heuristics(skill_dir, metadata, on_file=_on_file)
-
-                if raw_directory_scan:
+                if not candidates:
+                    # A pure-prose skill (no bundled scripts, no --invoke, no
+                    # SKILL.md usage examples) has nothing for the sandbox to run —
+                    # exactly the attack shape this project's own threat model
+                    # names first. Without this, the report renders identically to
+                    # a genuinely clean sandboxed run; static heuristics still ran
+                    # against the SKILL.md body, but dynamic behavior was never observed.
                     heuristic_findings = heuristic_findings + [
                         Finding(
-                            category="no_skill_md",
+                            category="sandbox_not_attempted",
                             severity=Severity.MEDIUM,
-                            summary=f"No SKILL.md found anywhere under {skill_dir} — this doesn't look "
-                            "like an agent skill (Claude, Cursor, or Codex). Static checks still ran "
-                            "against the raw directory contents, but there's no declared usage example "
-                            "or metadata to sandbox-run or evaluate against.",
-                            source="cli",
+                            summary="No invocable candidate found (no bundled script, --invoke flag, or "
+                            "SKILL.md usage example) — the sandbox never ran, so dynamic behavior was not "
+                            "observed; only the static pass applies to this result",
+                            source="sandbox",
                         )
                     ]
-                candidates = build_invocation_candidates(skill_dir, bundled_files, metadata.body, args.invoke)
-
-                semantic_review_ran = False
-                if args.semantic_review:
+                if candidates:
+                    # A single-skill scan has no other progress indicator during
+                    # what can be a --timeout-second wait; a collection scan
+                    # already printed "[idx/total] scanning ..." for this skill,
+                    # so a spinner on top of that per skill would just be noise.
+                    quiet_busy_status = args.quiet or total > 1
                     try:
-                        heuristic_findings = heuristic_findings + review_skill_instructions(
-                            metadata.name,
-                            metadata.description,
-                            metadata.body,
-                            when_to_use=metadata.when_to_use,
-                            source=str(skill_dir),
-                        )
-                        semantic_review_ran = True
-                    except SemanticReviewError as exc:
-                        print_warning(stderr_console, f"semantic review skipped for {skill_dir}: {exc}")
-
-                sandbox_results = None
-                if not args.no_sandbox:
-                    # run_skill_in_sandbox() below also calls ensure_docker_available()
-                    # itself (it's a public function other callers may use directly) —
-                    # this call exists only to fail fast with a distinct exit code
-                    # before doing any candidate-building work, not to avoid the
-                    # (cheap, subprocess-level) check that follows.
-                    try:
-                        ensure_docker_available()
-                    except DockerUnavailableError as exc:
-                        print_error(stderr_console, str(exc))
-                        return 3
-
-                    if not candidates:
-                        # A pure-prose skill (no bundled scripts, no --invoke, no
-                        # SKILL.md usage examples) has nothing for the sandbox to run —
-                        # exactly the attack shape this project's own threat model
-                        # names first. Without this, the report renders identically to
-                        # a genuinely clean sandboxed run; static heuristics still ran
-                        # against the SKILL.md body, but dynamic behavior was never observed.
-                        heuristic_findings = heuristic_findings + [
-                            Finding(
-                                category="sandbox_not_attempted",
-                                severity=Severity.MEDIUM,
-                                summary="No invocable candidate found (no bundled script, --invoke flag, or "
-                                "SKILL.md usage example) — the sandbox never ran, so dynamic behavior was not "
-                                "observed; only the static pass applies to this result",
-                                source="sandbox",
+                        with busy_status(stderr_console, "Running in sandbox...", quiet=quiet_busy_status):
+                            sandbox_results = run_skill_in_sandbox(
+                                skill_dir,
+                                candidates,
+                                allow_network=args.allow_network,
+                                timeout_s=args.timeout,
                             )
-                        ]
-                    if candidates:
-                        # A single-skill scan has no other progress indicator during
-                        # what can be a --timeout-second wait; a collection scan
-                        # already shows "Scanning" on this skill's live-table row,
-                        # and nesting a second Live display isn't supported.
-                        quiet_busy_status = args.quiet or total > 1
-                        try:
-                            with busy_status(stderr_console, "Running in sandbox...", quiet=quiet_busy_status):
-                                sandbox_results = run_skill_in_sandbox(
+                        if args.differential:
+                            with busy_status(
+                                stderr_console, "Running differential pass...", quiet=quiet_busy_status
+                            ):
+                                varied_results = run_skill_in_sandbox(
                                     skill_dir,
                                     candidates,
                                     allow_network=args.allow_network,
                                     timeout_s=args.timeout,
+                                    hostname=DIFFERENTIAL_HOSTNAME,
+                                    env_overrides=DIFFERENTIAL_ENV,
                                 )
-                            if args.differential:
-                                with busy_status(
-                                    stderr_console, "Running differential pass...", quiet=quiet_busy_status
-                                ):
-                                    varied_results = run_skill_in_sandbox(
-                                        skill_dir,
-                                        candidates,
-                                        allow_network=args.allow_network,
-                                        timeout_s=args.timeout,
-                                        hostname=DIFFERENTIAL_HOSTNAME,
-                                        env_overrides=DIFFERENTIAL_ENV,
-                                    )
-                                for baseline_result, varied_result in zip(sandbox_results, varied_results):
-                                    heuristic_findings = heuristic_findings + diff_sandbox_results(
-                                        baseline_result, varied_result
-                                    )
-                        except SentinelError as exc:
-                            print_error(stderr_console, str(exc))
-                            return 4
+                            for baseline_result, varied_result in zip(sandbox_results, varied_results):
+                                heuristic_findings = heuristic_findings + diff_sandbox_results(
+                                    baseline_result, varied_result
+                                )
+                    except SentinelError as exc:
+                        print_error(stderr_console, str(exc))
+                        return 4
 
-                report = build_report(
-                    skill_dir,
-                    metadata,
-                    heuristic_findings,
-                    sandbox_results,
-                    candidates,
-                    semantic_review_ran,
-                    sandbox_ran=not args.no_sandbox,
-                )
-                reports.append(report)
-                if progress:
-                    progress.finish(idx - 1, report.risk_level, report.risk_score)
-                elif total > 1 and not args.quiet:
-                    stderr_console.print(f"    -> {report.risk_level.value.upper()} ({report.risk_score})")
+            report = build_report(
+                skill_dir,
+                metadata,
+                heuristic_findings,
+                sandbox_results,
+                candidates,
+                semantic_review_ran,
+                sandbox_ran=not args.no_sandbox,
+            )
+            reports.append(report)
+            if total > 1 and not args.quiet:
+                stderr_console.print(f"    -> {report.risk_level.value.upper()} ({report.risk_score})")
 
         if not reports:
             print_error(stderr_console, f"No valid SKILL.md could be parsed under {source_dir}")
