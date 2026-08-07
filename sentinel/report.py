@@ -424,6 +424,25 @@ _RISK_LEVEL_VERDICT = {
     Severity.CRITICAL: "do not use this skill until these findings have been investigated",
 }
 
+# Categories that describe a gap in what could be checked, not something the
+# skill actually did - same distinction CATEGORY_METADATA's own comment above
+# already draws (no ATT&CK technique maps onto scan-infrastructure diagnostics).
+# A report with only these must not read as "flagged" the same way a real
+# finding does - "no dynamic behavior observed" is "we don't have data",
+# not "we found something bad".
+DIAGNOSTIC_CATEGORIES = {
+    "sandbox_timeout",
+    "sandbox_no_trace_data",
+    "sandbox_not_attempted",
+    "no_skill_md",
+    "tls_handshake_failed",
+}
+
+
+def _labels_for(findings: list[Finding]) -> str:
+    labels = sorted({FINDING_CATEGORY_LABELS.get(f.category, f.category.replace("_", " ")) for f in findings})
+    return _join_with_and(labels)
+
 
 def risk_guidance(report: Report) -> str:
     """One line naming what actually drove the risk verdict and stating,
@@ -432,8 +451,13 @@ def risk_guidance(report: Report) -> str:
     themselves."""
     if not report.findings:
         return "No concerning behavior found — this skill looks safe to use."
-    labels = sorted({FINDING_CATEGORY_LABELS.get(f.category, f.category.replace("_", " ")) for f in report.findings})
-    return f"Flagged for {_join_with_and(labels)} — {_RISK_LEVEL_VERDICT[report.risk_level]}."
+    real_findings = [f for f in report.findings if f.category not in DIAGNOSTIC_CATEGORIES]
+    if not real_findings:
+        return (
+            f"No malicious behavior found in what could be checked, but coverage is limited: "
+            f"{_labels_for(report.findings)}. Treat this as incomplete, not a clean bill of health."
+        )
+    return f"Flagged for {_labels_for(real_findings)} — {_RISK_LEVEL_VERDICT[report.risk_level]}."
 
 
 def build_report(

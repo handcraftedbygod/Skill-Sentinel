@@ -137,7 +137,7 @@ def print_warning(console: Console, message: str) -> None:
 @dataclass
 class SkillProgress:
     name: str
-    status: str = "Queued"  # "Queued" | "Scanning" | "Skipped" | "Done"
+    status: str = "Queued"  # "Queued" | "Scanning" | "Sandbox" | "Skipped" | "Done"
     risk_level: Severity | None = None
     risk_score: int | None = None
     files_done: int = 0
@@ -146,12 +146,15 @@ class SkillProgress:
     spinner: Spinner | None = None
 
 
+_SPINNING_STATUSES = ("Scanning", "Sandbox")
+
+
 def _status_cell(row: SkillProgress):
     # A live rich.spinner.Spinner, not a static "⟳" glyph — its render() reads
     # the wall clock on every repaint, so it visibly spins on Live's own
     # refresh_per_second ticks even while this skill's row hasn't changed
     # (e.g. mid-sandbox-run, well past the static file-scan pass).
-    if row.status == "Scanning" and row.spinner is not None:
+    if row.status in _SPINNING_STATUSES and row.spinner is not None:
         return row.spinner
     text, style = {
         "Queued": ("◦ Queued", "dim"),
@@ -174,6 +177,18 @@ def _progress_cell(done: int, total: int):
     return grid
 
 
+def _pulse_cell():
+    # The static file pass is fully done by the time a row reaches "Sandbox"
+    # (Files already reads N/N) — the Docker run that follows has no
+    # fractional signal to report, so an indeterminate pulse is the honest
+    # thing to show here, not a bar frozen at a misleading 100%.
+    grid = Table.grid(padding=(0, 1))
+    grid.add_column()
+    grid.add_column(justify="right", width=4)
+    grid.add_row(ProgressBar(pulse=True, width=18), "")
+    return grid
+
+
 def _build_progress_table(rows: list[SkillProgress]) -> Table:
     table = Table(show_header=True, header_style="bold cyan", border_style="dim", pad_edge=True, expand=False)
     table.add_column("Skill")
@@ -184,7 +199,7 @@ def _build_progress_table(rows: list[SkillProgress]) -> Table:
     table.add_column("Progress")
     for row in rows:
         files_text = Text(f"{row.files_done}/{row.files_total}" if row.files_total else "·", style="dim")
-        if row.status in ("Scanning", "Done"):
+        if row.status in (*_SPINNING_STATUSES, "Done"):
             issues_text = Text(str(row.issues), style="dark_orange" if row.issues else "dim")
         else:
             issues_text = Text("·", style="dim")
@@ -192,14 +207,8 @@ def _build_progress_table(rows: list[SkillProgress]) -> Table:
             risk_text = Text(f"{row.risk_level.value.upper()} ({row.risk_score})", style=SEVERITY_STYLE[row.risk_level])
         else:
             risk_text = Text("·", style="dim")
-        table.add_row(
-            row.name,
-            _status_cell(row),
-            files_text,
-            issues_text,
-            risk_text,
-            _progress_cell(row.files_done, row.files_total),
-        )
+        progress_cell = _pulse_cell() if row.status == "Sandbox" else _progress_cell(row.files_done, row.files_total)
+        table.add_row(row.name, _status_cell(row), files_text, issues_text, risk_text, progress_cell)
     if rows:
         table.add_section()
         done_files = sum(r.files_done for r in rows)
@@ -260,6 +269,12 @@ class CollectionProgress:
         row = self._rows[idx]
         row.files_done += 1
         row.issues = running_issues
+        self._refresh()
+
+    def running_sandbox(self, idx: int) -> None:
+        row = self._rows[idx]
+        row.status = "Sandbox"
+        row.spinner = Spinner("dots", text=Text("Sandbox", style="gold3"))
         self._refresh()
 
     def skip(self, idx: int) -> None:
@@ -379,7 +394,7 @@ def print_report(console: Console, report: Report) -> None:
         end="",
     )
     console.print(f"({report.risk_level.value.upper()})", style=SEVERITY_STYLE.get(report.risk_level))
-    console.print(risk_guidance(report), style="dim")
+    console.print(risk_guidance(report), style="white")
     console.print()
     console.print(_scan_summary_grid(report))
     console.print()
@@ -410,7 +425,7 @@ def print_summary_table(console: Console, reports: list[Report]) -> None:
         f"({worst.risk_level.value.upper()}, driven by {worst.skill_name or worst.skill_path})",
         style=SEVERITY_STYLE.get(worst.risk_level),
     )
-    console.print(risk_guidance(worst), style="dim")
+    console.print(risk_guidance(worst), style="white")
 
 
 def print_reports_generated(console: Console, *, html: str, json: str, markdown: str) -> None:

@@ -167,6 +167,27 @@ def test_collection_progress_shows_totals_upfront_for_queued_rows():
     assert "0/10" in out  # Overall: 0 done out of 4+6 total
 
 
+def test_collection_progress_sandbox_phase_pulses_instead_of_freezing_at_100():
+    # Regression case: once the static file pass hits N/N (100%), a full
+    # (non-static) scan still has the Docker run ahead of it - the row must
+    # not sit showing "Scanning, 100%" for that whole wait, which reads as
+    # stuck rather than as a distinct, still-in-progress phase.
+    console, buf = _console(no_color=True)
+    with CollectionProgress(console, ["skill-a"], [2]) as progress:
+        progress.start(0, "skill-a")
+        progress.advance_file(0, 0)
+        progress.advance_file(0, 0)
+        progress.running_sandbox(0)
+    out = buf.getvalue()
+    assert "Sandbox" in out
+    assert "2/2" in out  # files pass genuinely finished
+    # A brief "Scanning, 100%" frame is expected right as the last file
+    # lands (real, momentary) - what must NOT happen is the *final* state
+    # (after running_sandbox()) still showing that misleading 100%.
+    skill_a_lines = [line for line in out.splitlines() if "skill-a" in line]
+    assert skill_a_lines and "100%" not in skill_a_lines[-1]
+
+
 def test_busy_status_quiet_suppresses_output(capsys):
     console, buf = _console()
     ran = False

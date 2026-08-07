@@ -361,6 +361,49 @@ def test_risk_guidance_clean_report_says_safe_to_use():
     assert "safe to use" in risk_guidance(_clean_report())
 
 
+def test_risk_guidance_diagnostic_only_report_does_not_read_as_a_finding():
+    # sandbox_not_attempted is a coverage gap ("we don't have data"), not
+    # something the skill actually did - must not read as "Flagged for X"
+    # the same way a real finding does.
+    report = Report(
+        skill_path="/tmp/no-candidate",
+        skill_name="no-candidate",
+        skill_description=None,
+        findings=[
+            Finding(
+                category="sandbox_not_attempted",
+                severity=Severity.MEDIUM,
+                summary="No invocable candidate found",
+            )
+        ],
+        risk_score=3,
+        risk_level=Severity.MEDIUM,
+        invocations=[],
+    )
+    guidance = risk_guidance(report)
+    assert "Flagged for" not in guidance
+    assert "No malicious behavior found" in guidance
+    assert "incomplete" in guidance
+
+
+def test_risk_guidance_mixes_diagnostic_and_real_findings_lists_only_real_ones():
+    report = Report(
+        skill_path="/tmp/mixed",
+        skill_name="mixed",
+        skill_description=None,
+        findings=[
+            Finding(category="sandbox_not_attempted", severity=Severity.MEDIUM, summary="x"),
+            Finding(category="hidden_executable", severity=Severity.CRITICAL, summary="x"),
+        ],
+        risk_score=18,
+        risk_level=Severity.CRITICAL,
+        invocations=[],
+    )
+    guidance = risk_guidance(report)
+    assert "Flagged for a hidden executable file" in guidance
+    assert "no dynamic behavior observed" not in guidance
+
+
 def test_risk_guidance_caps_listed_categories():
     categories = [
         "base64_blob",

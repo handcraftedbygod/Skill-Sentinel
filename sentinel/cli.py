@@ -352,6 +352,13 @@ def _run_scan(args: argparse.Namespace) -> int:
                             )
                         ]
                     if candidates:
+                        # The static file pass is done by this point (files
+                        # already show N/N, 100%) — without this, the row sits
+                        # showing "Scanning, 100%" for however long the Docker
+                        # run actually takes, which reads as stuck rather than
+                        # as a distinct, still-in-progress phase.
+                        if progress:
+                            progress.running_sandbox(idx - 1)
                         # A single-skill scan has no other progress indicator during
                         # what can be a --timeout-second wait; a collection scan
                         # already printed "[idx/total] scanning ..." for this skill,
