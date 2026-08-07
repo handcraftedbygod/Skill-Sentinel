@@ -58,6 +58,25 @@ class SkillMdParseError(Exception):
     """Raised when SKILL.md's YAML frontmatter is present but malformed."""
 
 
+def _yaml_error_summary(exc: yaml.YAMLError) -> str:
+    """PyYAML's str() on a parse error is its own multi-line snippet-plus-caret
+    block (context line, quoted source excerpt, `^` pointer, repeated for a
+    second mark) - fine in isolation, but dumped into a scrolling per-skill
+    progress log via print_warning it reads like a crash. Collapse it to the
+    one line a user actually needs: what went wrong and where."""
+    problem = getattr(exc, "problem", None)
+    if problem is None:
+        # Some YAMLError subtypes don't set problem/problem_mark - fall back to
+        # a single-line version of the full message rather than a bare repr.
+        return " ".join(str(exc).split())
+    context = getattr(exc, "context", None)
+    summary = "; ".join(part for part in (context, problem) if part)
+    mark = getattr(exc, "problem_mark", None)
+    if mark is not None:
+        summary += f" (line {mark.line + 1})"
+    return summary
+
+
 @dataclass
 class SkillMetadata:
     name: str | None
@@ -173,7 +192,7 @@ def parse_skill_md(skill_dir: Path) -> SkillMetadata:
         raw_frontmatter = yaml.safe_load(frontmatter_text) or {}
     except yaml.YAMLError as exc:
         raise SkillMdParseError(
-            f"Malformed YAML frontmatter in {skill_md_path}: {exc}"
+            f"Malformed YAML frontmatter in {skill_md_path}: {_yaml_error_summary(exc)}"
         ) from exc
 
     if not isinstance(raw_frontmatter, dict):

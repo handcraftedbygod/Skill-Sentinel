@@ -2,7 +2,10 @@
 
 from pathlib import Path
 
+import pytest
+
 from sentinel.skillmd import (
+    SkillMdParseError,
     discover_skill_directories,
     extract_usage_examples,
     normalize_allowed_tools,
@@ -16,6 +19,20 @@ EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 def test_single_skill_repo_finds_its_own_root():
     found = discover_skill_directories(EXAMPLES_DIR / "clean" / "word-counter")
     assert found == [EXAMPLES_DIR / "clean" / "word-counter"]
+
+
+def test_malformed_yaml_frontmatter_error_is_a_single_line(tmp_path):
+    # PyYAML's str() on a parse error is its own multi-line snippet-plus-caret
+    # block - printed via print_warning mid-scan it reads like a crash. The
+    # error attached to SkillMdParseError must collapse that to one line.
+    (tmp_path / "SKILL.md").write_text(
+        "---\nname: Bad Name\ndescription: [unclosed bracket\n---\nBody.\n", encoding="utf-8"
+    )
+    with pytest.raises(SkillMdParseError) as exc_info:
+        parse_skill_md(tmp_path)
+    message = str(exc_info.value)
+    assert "\n" not in message
+    assert "line" in message
 
 
 def test_collection_repo_finds_every_subdirectory_skill(tmp_path):
