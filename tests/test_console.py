@@ -2,6 +2,7 @@
 markup=False guard against skill-content that looks like Rich markup."""
 
 import io
+from time import monotonic
 
 from rich.console import Console
 
@@ -217,6 +218,38 @@ def test_collection_progress_stays_scanning_through_the_sandbox_wait():
     out = buf.getvalue()
     assert "2/2" in out
     assert "Done" in out
+
+
+def test_collection_progress_starts_creeping_bar_once_files_finish():
+    console, buf = _console(no_color=True)
+    with CollectionProgress(console, ["skill-a"], [2]) as progress:
+        progress.start(0, "skill-a")
+        assert progress._rows[0].creep_start is None
+        progress.advance_file(0, 0)
+        assert progress._rows[0].creep_start is None  # 1/2 - file pass not done yet
+        progress.advance_file(0, 0)
+        assert progress._rows[0].creep_start is not None  # 2/2 - nothing left to report, creep begins
+        progress.finish(0, Severity.LOW, 0, 0)
+        assert progress._rows[0].creep_start is None  # cleared once truly done
+
+
+def test_collection_progress_zero_file_skill_creeps_immediately():
+    # A pure-prose skill (no bundled scripts) never triggers advance_file() at
+    # all - it must still get the creeping bar, not sit on a static "·".
+    console, buf = _console(no_color=True)
+    with CollectionProgress(console, ["skill-a"], [0]) as progress:
+        progress.start(0, "skill-a")
+        assert progress._rows[0].creep_start is not None
+
+
+def test_creeping_progress_bar_never_shows_100_percent():
+    from sentinel.console import _CreepingProgressBar
+
+    console, buf = _console(no_color=True)
+    console.print(_CreepingProgressBar(start_time=monotonic() - 1000))
+    out = buf.getvalue()
+    assert "99%" in out
+    assert "100%" not in out
 
 
 def test_busy_status_quiet_suppresses_output(capsys):

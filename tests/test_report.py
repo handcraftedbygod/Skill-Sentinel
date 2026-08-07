@@ -385,7 +385,30 @@ def test_risk_guidance_diagnostic_only_report_does_not_read_as_a_finding():
     assert "No malicious behavior found" in guidance
     # Must read as confident, not as the tool hedging on its own result.
     assert "incomplete" not in guidance
+    # sandbox_not_attempted only ever fires on a full (non-static) scan where
+    # the sandbox was attempted but had nothing invocable to run — must not
+    # claim the scan was --static, which would be false.
+    assert "static" not in guidance.lower()
+    assert "no bundled script" in guidance
     assert "treat this" not in guidance.lower()
+
+
+def test_risk_guidance_gives_a_distinct_explanation_per_diagnostic_category():
+    # Each diagnostic category means something different (no candidate to run
+    # vs. a timeout vs. a broken trace) — must not collapse to one interchangeable
+    # blanket phrase regardless of which one actually happened.
+    timeout_report = Report(
+        skill_path="/tmp/timeout",
+        skill_name="timeout",
+        skill_description=None,
+        findings=[Finding(category="sandbox_timeout", severity=Severity.MEDIUM, summary="x")],
+        risk_score=3,
+        risk_level=Severity.MEDIUM,
+        invocations=[],
+    )
+    guidance = risk_guidance(timeout_report)
+    assert "didn't finish within the timeout" in guidance
+    assert "no bundled script" not in guidance
 
 
 def test_risk_guidance_mixes_diagnostic_and_real_findings_lists_only_real_ones():

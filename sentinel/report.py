@@ -438,6 +438,23 @@ DIAGNOSTIC_CATEGORIES = {
     "tls_handshake_failed",
 }
 
+# Purpose-built per-category explanations — a single generic "static checks
+# only" trailer was factually wrong for most of these: sandbox_not_attempted,
+# sandbox_timeout, sandbox_no_trace_data, and tls_handshake_failed only ever
+# fire on a full (non-static) scan where the sandbox WAS attempted, each for
+# a different reason. Only actually say "static" where that's what happened.
+DIAGNOSTIC_EXPLANATIONS = {
+    "sandbox_not_attempted": "no bundled script, --invoke flag, or usage example was found to run, "
+    "so dynamic behavior wasn't observed",
+    "sandbox_timeout": "the sandboxed run didn't finish within the timeout, so this result is "
+    "inconclusive rather than a clean pass",
+    "sandbox_no_trace_data": "the sandbox produced no trace data, so this result is inconclusive "
+    "rather than a clean pass",
+    "no_skill_md": "no SKILL.md was found, so this doesn't look like a real agent skill",
+    "tls_handshake_failed": "a TLS handshake failed during the scan (possibly certificate pinning), "
+    "so that connection's traffic couldn't be inspected",
+}
+
 
 def _labels_for(findings: list[Finding]) -> str:
     labels = sorted({FINDING_CATEGORY_LABELS.get(f.category, f.category.replace("_", " ")) for f in findings})
@@ -453,7 +470,9 @@ def risk_guidance(report: Report) -> str:
         return "No concerning behavior found — this skill looks safe to use."
     real_findings = [f for f in report.findings if f.category not in DIAGNOSTIC_CATEGORIES]
     if not real_findings:
-        return f"No malicious behavior found — {_labels_for(report.findings)}, so this result is based on static checks only."
+        categories = sorted({f.category for f in report.findings})
+        explanations = [DIAGNOSTIC_EXPLANATIONS.get(c, "coverage was limited") for c in categories]
+        return f"No malicious behavior found — {'; '.join(explanations)}."
     return f"Flagged for {_labels_for(real_findings)} — {_RISK_LEVEL_VERDICT[report.risk_level]}."
 
 

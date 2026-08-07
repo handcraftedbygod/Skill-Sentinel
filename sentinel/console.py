@@ -14,8 +14,10 @@ html.escape().
 from __future__ import annotations
 
 import importlib.metadata
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass
+from time import monotonic
 
 from rich.console import Console
 from rich.live import Live
@@ -144,6 +146,45 @@ class SkillProgress:
     files_total: int = 0
     issues: int = 0
     spinner: Spinner | None = None
+    creep_start: float | None = None
+
+
+class _CreepingProgressBar:
+    """A percentage bar for the stretch of a skill's scan with no fractional
+    signal left to report (the file pass is done, but candidate-building,
+    semantic review, or the sandbox run itself may still be ahead — none of
+    which report incremental progress). Climbs quickly at first, then eases
+    toward (never quite reaching) 99%, so the bar keeps visibly moving in
+    step with the still-active "Scanning" status instead of sitting frozen
+    at a 100% that would falsely claim this skill is done. Recomputed fresh
+    on every repaint (including Live's own background refresh ticks, not
+    just our explicit updates), the same self-animating pattern rich.spinner.
+    Spinner uses — real elapsed time, not a fixed step sequence."""
+
+    def __init__(self, start_time: float, tau: float = 2.5, width: int = 18):
+        self.start_time = start_time
+        self.tau = tau
+        self.width = width
+
+    def _grid(self, pct: int):
+        grid = Table.grid(padding=(0, 1))
+        grid.add_column()
+        grid.add_column(justify="right", width=4)
+        grid.add_row(ProgressBar(total=100, completed=pct, width=self.width), f"{pct}%")
+        return grid
+
+    def __rich_console__(self, console, options):
+        elapsed = monotonic() - self.start_time
+        pct = min(99, int(100 * (1 - math.exp(-elapsed / self.tau))))
+        yield self._grid(pct)
+
+    def __rich_measure__(self, console, options):
+        # Without this, Rich falls back to measuring this frame's actual
+        # rendered text — "3%" is narrower than "42%" — and the outer table's
+        # Progress column visibly resizes frame to frame as the live
+        # percentage's digit count changes. Measure a fixed reference (same
+        # column widths _progress_cell uses) so it doesn't.
+        return self._grid(0).__rich_measure__(console, options)
 
 
 def _status_cell(row: SkillProgress):
@@ -194,14 +235,11 @@ def _build_progress_table(rows: list[SkillProgress]) -> Table:
             risk_text = Text(f"{row.risk_level.value.upper()} ({row.risk_score})", style=SEVERITY_STYLE[row.risk_level])
         else:
             risk_text = Text("·", style="dim")
-        table.add_row(
-            row.name,
-            _status_cell(row),
-            files_text,
-            issues_text,
-            risk_text,
-            _progress_cell(row.files_done, row.files_total),
-        )
+        if row.status == "Scanning" and row.creep_start is not None:
+            progress_cell = _CreepingProgressBar(row.creep_start)
+        else:
+            progress_cell = _progress_cell(row.files_done, row.files_total)
+        table.add_row(row.name, _status_cell(row), files_text, issues_text, risk_text, progress_cell)
     if rows:
         table.add_section()
         done_files = sum(r.files_done for r in rows)
@@ -255,6 +293,10 @@ class CollectionProgress:
         row.status = "Scanning"
         row.files_done = 0
         row.issues = 0
+        # A skill with no bundled files (pure prose, no scripts) never gets
+        # an advance_file() call to trigger the creep bar below - start it
+        # immediately, since there's no file phase to show first either way.
+        row.creep_start = monotonic() if row.files_total == 0 else None
         row.spinner = Spinner("dots", text=Text("Scanning", style="gold3"))
         self._refresh()
 
@@ -262,6 +304,11 @@ class CollectionProgress:
         row = self._rows[idx]
         row.files_done += 1
         row.issues = running_issues
+        if row.files_done >= row.files_total:
+            # File pass just finished but the skill isn't done yet (finish()
+            # hasn't landed) — start the creeping bar for whatever's left
+            # (candidate-building, semantic review, the sandbox run itself).
+            row.creep_start = monotonic()
         self._refresh()
 
     def skip(self, idx: int) -> None:
@@ -276,6 +323,7 @@ class CollectionProgress:
         row.files_done = row.files_total
         row.issues = issues
         row.spinner = None
+        row.creep_start = None
         self._refresh()
 
 
