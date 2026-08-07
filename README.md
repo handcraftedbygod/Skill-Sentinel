@@ -1,4 +1,4 @@
-# SkillTrace
+#🛡️SkillTrace
 
 [![CI](https://img.shields.io/github/actions/workflow/status/handcraftedbygod/SkillTrace/ci.yml?branch=main&label=tests)](https://github.com/handcraftedbygod/SkillTrace/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/handcraftedbygod/SkillTrace)](LICENSE)
