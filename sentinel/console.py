@@ -24,11 +24,13 @@ from rich.table import Table
 from rich.text import Text
 
 from sentinel.findings import Severity
-from sentinel.report import Report
+from sentinel.report import RISK_LEVEL_GUIDANCE, Report
 
 SEVERITY_STYLE = {
     Severity.LOW: "green",
-    Severity.MEDIUM: "yellow",
+    # gold3, not the default ANSI "yellow" — reads as amber against a dark
+    # terminal background instead of a harsh caution-siren yellow.
+    Severity.MEDIUM: "gold3",
     Severity.HIGH: "dark_orange",
     Severity.CRITICAL: "bold red",
 }
@@ -247,12 +249,16 @@ def file_scan_progress(console: Console, total: int, *, quiet: bool):
 
 
 def _findings_table(findings: list) -> Table:
-    table = Table(show_lines=False)
-    table.add_column("Severity")
-    table.add_column("Category", overflow="fold")
-    table.add_column("Summary", ratio=1, overflow="fold")
-    table.add_column("Confidence")
-    table.add_column("ATT&CK")
+    # show_lines + vertical="middle": the Summary column often wraps to several
+    # lines while Severity/Category/Confidence/ATT&CK don't, which without a
+    # row separator and middle alignment reads as one cramped, undifferentiated
+    # block of text rather than distinct rows.
+    table = Table(show_lines=True)
+    table.add_column("Severity", vertical="middle")
+    table.add_column("Category", overflow="fold", vertical="middle")
+    table.add_column("Summary", ratio=1, overflow="fold", vertical="middle")
+    table.add_column("Confidence", vertical="middle")
+    table.add_column("ATT&CK", vertical="middle")
     for f in findings:
         table.add_row(
             f.severity.value.upper(),
@@ -292,6 +298,7 @@ def print_report(console: Console, report: Report) -> None:
         end="",
     )
     console.print(f"({report.risk_level.value.upper()})", style=SEVERITY_STYLE.get(report.risk_level))
+    console.print(RISK_LEVEL_GUIDANCE[report.risk_level], style="dim")
     console.print()
     console.print(_scan_summary_grid(report))
     console.print()

@@ -30,6 +30,16 @@ SEVERITY_WEIGHT = {
     Severity.CRITICAL: 15,
 }
 
+# A bare "MEDIUM" or a number like "24" means nothing to a reader without a
+# baseline — this is the one-line answer to "is that bad?" shown next to the
+# score in the CLI, Markdown, and HTML reports alike.
+RISK_LEVEL_GUIDANCE: dict[Severity, str] = {
+    Severity.LOW: "Nothing concerning found — safe to use as-is.",
+    Severity.MEDIUM: "A few things worth a human look, but nothing that should block normal use.",
+    Severity.HIGH: "Review the findings below before trusting this skill with real data or credentials.",
+    Severity.CRITICAL: "Do not run this skill until every finding below has been investigated.",
+}
+
 SECRET_LOOKING_RE_PARTS = ("key", "token", "secret", "password", "credential", "api_key")
 
 # Findings that come from reading file content, not from running the skill —
@@ -426,6 +436,8 @@ def render_markdown(report: Report) -> str:
         lines.append("")
     lines.append(f"**Risk score:** {report.risk_score} ({report.risk_level.value.upper()})")
     lines.append("")
+    lines.append(f"_{RISK_LEVEL_GUIDANCE[report.risk_level]}_")
+    lines.append("")
     lines.append(f"**Invocations attempted:** {', '.join(f'`{i}`' for i in report.invocations) or '(none)'}")
     lines.append("")
     lines.append(
@@ -628,6 +640,7 @@ def _report_body_html(report: Report) -> str:
         f"{description}"
         f'<div class="risk-badge" style="background:{risk_color}">'
         f"{report.risk_level.value.upper()} ({report.risk_score})</div>"
+        f'<p class="description">{html.escape(RISK_LEVEL_GUIDANCE[report.risk_level])}</p>'
         f'<p class="invocations">Invocations attempted: {invocations}</p>'
         f'<p class="invocations">Pre-authorized tools (allowed-tools): {allowed_tools}</p>'
         f"{''.join(sections)}"
