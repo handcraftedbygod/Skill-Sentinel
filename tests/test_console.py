@@ -11,6 +11,7 @@ from sentinel.console import (
     file_scan_progress,
     maybe_print_banner,
     print_report,
+    print_scan_complete,
     print_summary_table,
     print_welcome,
 )
@@ -165,6 +166,38 @@ def test_collection_progress_shows_totals_upfront_for_queued_rows():
     assert "0/4" in out
     assert "0/6" in out
     assert "0/10" in out  # Overall: 0 done out of 4+6 total
+
+
+def test_scan_complete_splits_scan_and_animation_time_when_animated():
+    console, buf = _console(no_color=True)
+    print_scan_complete(
+        console,
+        skills_scanned=3,
+        files_scanned=5,
+        findings_by_severity={},
+        elapsed_s=1.5,
+        animation_s=1.2,
+    )
+    out = buf.getvalue()
+    assert "Scan time:" in out
+    assert "0.30s" in out  # 1.5 - 1.2
+    assert "Animation time:" in out
+    assert "1.20s" in out
+    assert "Time:" not in out
+
+
+def test_scan_complete_shows_plain_time_when_not_animated():
+    console, buf = _console(no_color=True)
+    print_scan_complete(
+        console,
+        skills_scanned=1,
+        files_scanned=2,
+        findings_by_severity={},
+        elapsed_s=0.05,
+    )
+    out = buf.getvalue()
+    assert "Time:" in out
+    assert "Animation time:" not in out
 
 
 def test_collection_progress_stays_scanning_through_the_sandbox_wait():

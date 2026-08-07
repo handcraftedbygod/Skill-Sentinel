@@ -163,6 +163,11 @@ def test_scan_complete_summary_reports_files_and_findings(capsys):
     assert "CRITICAL:" in err
     assert "HIGH:" in err
     assert "MEDIUM:" in err
+    # --static's animation pacing only applies on a real terminal (see
+    # cli.py's animate_static) - a non-interactive run like this one (capsys
+    # isn't a tty) must not be slowed down by it or show a fake time split.
+    assert "Time:" in err
+    assert "Animation time:" not in err
 
 
 def test_report_write_failure_warns_but_does_not_fail_the_scan(capsys):

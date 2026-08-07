@@ -57,6 +57,16 @@ FAIL_THRESHOLD_CHOICES = ["low", "medium", "high", "critical"]
 
 DEFAULT_HTML_REPORT = "skilltrace-report.html"
 
+# --static can genuinely finish scanning a small skill in single-digit
+# milliseconds — real per-file progress at that speed reads as a single
+# instant jump to 100% rather than motion. STATIC_ANIMATION_DWELL_S floors
+# how little time passes between file updates so it's actually visible;
+# STATIC_ANIMATION_BUDGET_S caps how much total wall-clock time this adds
+# across the whole scan, so a large collection isn't padded into a crawl —
+# once spent, remaining files advance at full real speed.
+STATIC_ANIMATION_DWELL_S = 0.09
+STATIC_ANIMATION_BUDGET_S = 2.0
+
 _SCAN_EXAMPLES = [
     ("skilltrace scan ./my-skill", "scan a local skill directory"),
     ("skilltrace scan ./my-skill --static", "static-only, no Docker required"),
@@ -223,6 +233,12 @@ def _run_scan(args: argparse.Namespace) -> int:
         reports = []
         total = len(skill_dirs)
         total_files_scanned = 0
+        # Deliberate pacing only makes sense where there's a live animation
+        # to smooth out in the first place — --quiet and non-terminal output
+        # have none, so there's nothing to gain from slowing the scan down.
+        animate_static = args.no_sandbox and not args.quiet and stderr_console.is_terminal
+        animation_time_s = 0.0
+        last_file_time = time.time()
         # Discovered once upfront (not lazily per-skill in the loop below) so
         # a collection scan's progress table can show every row's real
         # "done/total" — including still-Queued ones — from the very first
@@ -278,8 +294,15 @@ def _run_scan(args: argparse.Namespace) -> int:
                     stderr_console.print(f"[{idx}/{total}] scanning {skill_label}...")
 
                 def _on_file(filename: str, running_issues: int) -> None:
-                    nonlocal total_files_scanned
+                    nonlocal total_files_scanned, animation_time_s, last_file_time
                     total_files_scanned += 1
+                    if animate_static and animation_time_s < STATIC_ANIMATION_BUDGET_S:
+                        since_last = time.time() - last_file_time
+                        if since_last < STATIC_ANIMATION_DWELL_S:
+                            pad = STATIC_ANIMATION_DWELL_S - since_last
+                            time.sleep(pad)
+                            animation_time_s += pad
+                    last_file_time = time.time()
                     if progress:
                         progress.advance_file(idx - 1, running_issues)
                     else:
@@ -460,6 +483,7 @@ def _run_scan(args: argparse.Namespace) -> int:
         files_scanned=total_files_scanned,
         findings_by_severity=findings_by_severity,
         elapsed_s=time.time() - start_time,
+        animation_s=animation_time_s,
     )
 
     if args.fail_threshold:

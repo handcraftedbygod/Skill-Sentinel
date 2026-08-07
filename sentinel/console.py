@@ -436,6 +436,7 @@ def print_scan_complete(
     files_scanned: int,
     findings_by_severity: dict[Severity, int],
     elapsed_s: float,
+    animation_s: float = 0.0,
 ) -> None:
     console.print()
     console.print("Scan complete", style="bold green")
@@ -450,5 +451,12 @@ def print_scan_complete(
         count = findings_by_severity.get(severity, 0)
         if count:
             grid.add_row(f"  {severity.value.upper()}:", Text(str(count), style=SEVERITY_STYLE[severity]))
-    grid.add_row("Time:", f"{elapsed_s:.2f}s")
+    if animation_s > 0:
+        # --static can genuinely finish in single-digit milliseconds — split
+        # out so the reported time doesn't quietly include deliberate pacing
+        # (see cli.py's STATIC_ANIMATION_DWELL_S) as if it were real scan work.
+        grid.add_row("Scan time:", f"{max(elapsed_s - animation_s, 0):.2f}s")
+        grid.add_row("Animation time:", f"{animation_s:.2f}s")
+    else:
+        grid.add_row("Time:", f"{elapsed_s:.2f}s")
     console.print(grid)
