@@ -170,7 +170,10 @@ class _CreepingProgressBar:
         grid = Table.grid(padding=(0, 1))
         grid.add_column()
         grid.add_column(justify="right", width=4)
-        grid.add_row(ProgressBar(total=100, completed=pct, width=self.width), f"{pct}%")
+        grid.add_row(
+            ProgressBar(total=100, completed=pct, width=self.width, complete_style="green", finished_style="green"),
+            f"{pct}%",
+        )
         return grid
 
     def __rich_console__(self, console, options):
@@ -213,7 +216,10 @@ def _progress_cell(done: int, total: int):
     grid = Table.grid(padding=(0, 1))
     grid.add_column()
     grid.add_column(justify="right", width=4)
-    grid.add_row(ProgressBar(total=total, completed=done, width=18), f"{int(done / total * 100)}%")
+    grid.add_row(
+        ProgressBar(total=total, completed=done, width=18, complete_style="green", finished_style="green"),
+        f"{int(done / total * 100)}%",
+    )
     return grid
 
 
@@ -362,7 +368,7 @@ def file_scan_progress(console: Console, total: int, *, quiet: bool):
         return
     progress = Progress(
         TextColumn("Scanning files", markup=False),
-        BarColumn(),
+        BarColumn(complete_style="green", finished_style="green"),
         MofNCompleteColumn(),
         TaskProgressColumn(),
         TextColumn("{task.fields[filename]}", markup=False, style="dim"),
