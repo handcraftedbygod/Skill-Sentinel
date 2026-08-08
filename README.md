@@ -1,6 +1,6 @@
 # 🛡️ SkillTrace
 
-![SkillTrace banner](docs/assets/cli-hero.png)
+![SkillTrace banner](https://raw.githubusercontent.com/handcraftedbygod/SkillTrace/main/docs/assets/cli-hero.png)
 
 [![PyPI](https://img.shields.io/pypi/v/skilltrace)](https://pypi.org/project/skilltrace/)
 [![Downloads](https://img.shields.io/pypi/dm/skilltrace)](https://pypi.org/project/skilltrace/)
@@ -68,17 +68,17 @@ Every scan also auto-writes all three report formats to `.skilltrace/reports/ski
 
 A full collection scan against SkillTrace's own bundled `examples/` fixtures, nine synthetic, inert skills covering clean, malicious, and edge-case shapes, run with `--static` so it needs no Docker:
 
-![Animated demo of skilltrace scanning a 9-skill collection: a live progress table fills in per skill with status, files, issues, and risk verdict, then a final risk-ranked summary table](docs/assets/demo.gif)
+![Animated demo of skilltrace scanning a 9-skill collection: a live progress table fills in per skill with status, files, issues, and risk verdict, then a final risk-ranked summary table](https://raw.githubusercontent.com/handcraftedbygod/SkillTrace/main/docs/assets/demo.gif)
 
 That same live table is what a real terminal shows during any multi-skill scan (see [Quickstart](#quickstart) above).
 
 For a closer look at a single finding-by-finding report, here's `examples/malicious/pdf-formatter`, a SkillCloak-style fixture bundled in this repo specifically to exercise these checks:
 
-![Terminal output of a skilltrace scan flagging a CRITICAL risk score with a colored MEDIUM, HIGH, and CRITICAL finding](docs/assets/terminal-scan.png)
+![Terminal output of a skilltrace scan flagging a CRITICAL risk score with a colored MEDIUM, HIGH, and CRITICAL finding](https://raw.githubusercontent.com/handcraftedbygod/SkillTrace/main/docs/assets/terminal-scan.png)
 
 And the `--html` report for that same scan:
 
-![Self-contained HTML report showing the same three findings with colored severity badges](docs/assets/html-report.png)
+![Self-contained HTML report showing the same three findings with colored severity badges](https://raw.githubusercontent.com/handcraftedbygod/SkillTrace/main/docs/assets/html-report.png)
 
 This fixture's own `SKILL.md` says up front that it is inert. It never makes a network call, so this particular run only exercises the static pass: the self-decoding payload and the hidden executable at a dotfile path, the exact structural obfuscation the SkillCloak paper describes. The sandbox's decrypted-network-capture path (a skill that actually calls out, and what the intercepted request looks like in a report) is described under [How it works](#how-it-works) below, and see [Safety model](#safety-model) for why running that fixture never risks the real internet either way.
 
@@ -125,7 +125,7 @@ Every fixture below lives under [`examples/`](examples/), is inert by design, an
 | [`malicious/hidden-when-to-use`](examples/malicious/hidden-when-to-use) | Exfil instruction hidden in `when_to_use`, a frontmatter field never shown in a skill-picker UI — `description` alone reads completely benign | Nothing to scan, a description-only or file-content check never sees this field at all | CRITICAL (score 30): `skill_md_exfil_instruction`, explicitly attributed to `when_to_use` in the finding's source |
 | [`edge-case/dotfile-hygiene-helper`](examples/edge-case/dotfile-hygiene-helper) | Cursor's `paths` field (no Claude/Codex equivalent) auto-scoping a skill to `.ssh/`, `.env`, and `credentials` paths | Nothing, most static scanners don't parse Cursor-specific frontmatter fields at all | MEDIUM (score 3): `frontmatter_sensitive_path_scope`, calibrated below CRITICAL since a legitimate dotfile-hygiene helper needs the same scope |
 
-![Horizontal bar chart of risk score per fixture: three CRITICAL fixtures (pdf-formatter 25, dns-exfil-sample 15, cloud-deploy-helper 15), two MEDIUM (dev-tooling-script 3, cli-tool-installer 3), two LOW (support-ticket-triage 0, word-counter 0)](docs/assets/fixture-benchmark-chart.png)
+![Horizontal bar chart of risk score per fixture: three CRITICAL fixtures (pdf-formatter 25, dns-exfil-sample 15, cloud-deploy-helper 15), two MEDIUM (dev-tooling-script 3, cli-tool-installer 3), two LOW (support-ticket-triage 0, word-counter 0)](https://raw.githubusercontent.com/handcraftedbygod/SkillTrace/main/docs/assets/fixture-benchmark-chart.png)
 
 ## Architecture
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skilltrace"
-version = "0.1.0"
+version = "0.1.1"
 description = "A behavioral scanner for agent skills (Claude, Cursor, Codex): sandboxes and traces what a skill actually does instead of trusting its description."
 readme = "README.md"
 license = { file = "LICENSE" }
