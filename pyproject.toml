@@ -14,11 +14,25 @@ dependencies = [
     "rich>=13.7",
     "rich-argparse>=1.5",
 ]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/handcraftedbygod/SkillTrace"
+Repository = "https://github.com/handcraftedbygod/SkillTrace"
+Issues = "https://github.com/handcraftedbygod/SkillTrace/issues"
 
 [project.scripts]
 skilltrace = "sentinel.cli:main"
