@@ -1,8 +1,13 @@
-#🛡️SkillTrace
+# 🛡️ SkillTrace
 
+![SkillTrace banner](docs/assets/cli-hero.png)
+
+[![PyPI](https://img.shields.io/pypi/v/skilltrace)](https://pypi.org/project/skilltrace/)
+[![Downloads](https://img.shields.io/pypi/dm/skilltrace)](https://pypi.org/project/skilltrace/)
 [![CI](https://img.shields.io/github/actions/workflow/status/handcraftedbygod/SkillTrace/ci.yml?branch=main&label=tests)](https://github.com/handcraftedbygod/SkillTrace/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/handcraftedbygod/SkillTrace)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+![Windows · macOS · Linux](https://img.shields.io/badge/platform-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-lightgrey)
 
 **A defensive, behavioral scanner for agent skills — Claude, Cursor, and Codex — built to close the detection gap SkillCloak identified in static-only tools.**
 
@@ -26,10 +31,12 @@ For the deeper design rationale behind this (why `strace` over eBPF, why severit
 ## Install
 
 ```
-pip install git+https://github.com/handcraftedbygod/SkillTrace.git
+pip install skilltrace
 ```
 
 Requires [Docker](https://docs.docker.com/get-docker/) for the sandboxed scan — or add `--static` for a Docker-free static-only pass (`--no-sandbox` still works too, kept as an alias).
+
+Want the latest unreleased commit instead of the last PyPI release: `pip install git+https://github.com/handcraftedbygod/SkillTrace.git`.
 
 **Virtual environment (recommended):**
 
@@ -37,7 +44,7 @@ Requires [Docker](https://docs.docker.com/get-docker/) for the sandboxed scan �
 python -m venv skilltrace-env
 source skilltrace-env/bin/activate  # On Windows: skilltrace-env\Scripts\activate
 
-pip install git+https://github.com/handcraftedbygod/SkillTrace.git
+pip install skilltrace
 skilltrace scan ./my-skill
 ```
 
@@ -51,15 +58,21 @@ skilltrace scan ./my-skill --html
 ANTHROPIC_API_KEY=sk-... skilltrace scan ./my-skill --semantic-review
 ```
 
-A single git URL can also point at a collection repo, one repo bundling many skills, each in its own subdirectory, with no `SKILL.md` at the root. SkillTrace finds every one of them and scans each independently (see `sentinel/skillmd.py`'s `discover_skill_directories`), turning the report into a list of per-skill reports instead of a single one, with per-skill progress printed to stderr as it goes (`[3/87] scanning some-skill... -> LOW (0)`) so a large collection scan isn't a silent black box. This includes skills nested under a conventional agent-tool install directory (`.claude/skills/`, `.agents/skills/`, `.gemini/skills/`, `.cursor/skills/`, `.codex/skills/`, `.openclaw/skills/`); plain dot-directory exclusion would otherwise make them invisible, which is exactly how a real third-party malicious sample was structured (see below). `SKILL.md`'s filename match is also case-insensitive, since a real sample in the wild used `skill.md`.
+A single git URL can also point at a collection repo, one repo bundling many skills, each in its own subdirectory, with no `SKILL.md` at the root. SkillTrace finds every one of them and scans each independently (see `sentinel/skillmd.py`'s `discover_skill_directories`), turning the report into a list of per-skill reports instead of a single one. On a real terminal this renders as a live-updating table, one row per skill with its status, files scanned, issues found so far, risk verdict, and a fill-as-it-scans progress bar, so a large collection scan isn't a silent black box (see the [Demo](#demo) below for exactly what this looks like). Anywhere else, piped output, CI, `--quiet`, it falls back to a plain per-skill line instead (`[3/87] scanning some-skill... -> LOW (0)`). This includes skills nested under a conventional agent-tool install directory (`.claude/skills/`, `.agents/skills/`, `.gemini/skills/`, `.cursor/skills/`, `.codex/skills/`, `.openclaw/skills/`); plain dot-directory exclusion would otherwise make them invisible, which is exactly how a real third-party malicious sample was structured (see below). `SKILL.md`'s filename match is also case-insensitive, since a real sample in the wild used `skill.md`.
 
 `--html` writes a self-contained, styled HTML report alongside the normal terminal output: severity-colored findings, a summary table for collection scans, collapsible per-skill sections. Good for a full visual review or as a CI artifact you can download and open. No external assets, works offline. Terminal output itself gets severity-colored automatically when stdout is a real terminal (never when piped to a file or used with `--json`, which stay exactly what they claim to be).
 
-Every scan also auto-writes all three report formats to `.skilltrace/reports/skilltrace-scan-<timestamp>.{html,json,md}`, unconditionally, independent of `--html`/`-o`/`--json` (those remain for pinning an exact filename or format, e.g. in a script). A `Reports generated:` block prints where they landed, followed by a `Scan complete` summary (skills scanned, files scanned, findings by severity, elapsed time). On a real terminal, a live percentage bar tracks the static pass file-by-file as it runs. Add `.skilltrace/` to your `.gitignore`.
+Every scan also auto-writes all three report formats to `.skilltrace/reports/skilltrace-scan-<timestamp>.{html,json,md}`, unconditionally, independent of `--html`/`-o`/`--json` (those remain for pinning an exact filename or format, e.g. in a script). A `Reports generated:` block prints where they landed, followed by a `Scan complete` summary (skills scanned, files scanned, findings by severity, elapsed time). On a real terminal, a live percentage bar tracks the static pass file-by-file as it runs; `--static` on a tiny skill can genuinely finish in milliseconds, so the CLI paces that bar just enough to stay visible and then reports "Scan time" and "Animation time" as two separate numbers, never folding deliberate pacing into the real result. Add `.skilltrace/` to your `.gitignore`.
 
-## Example output
+## Demo
 
-Scanning SkillTrace's own `examples/malicious/pdf-formatter` test fixture, a synthetic, inert SkillCloak-style skill bundled in this repo specifically to exercise these checks, produces this, unedited:
+A full collection scan against SkillTrace's own bundled `examples/` fixtures, nine synthetic, inert skills covering clean, malicious, and edge-case shapes, run with `--static` so it needs no Docker:
+
+![Animated demo of skilltrace scanning a 9-skill collection: a live progress table fills in per skill with status, files, issues, and risk verdict, then a final risk-ranked summary table](docs/assets/demo.gif)
+
+That same live table is what a real terminal shows during any multi-skill scan (see [Quickstart](#quickstart) above).
+
+For a closer look at a single finding-by-finding report, here's `examples/malicious/pdf-formatter`, a SkillCloak-style fixture bundled in this repo specifically to exercise these checks:
 
 ![Terminal output of a skilltrace scan flagging a CRITICAL risk score with a colored MEDIUM, HIGH, and CRITICAL finding](docs/assets/terminal-scan.png)
 
@@ -300,10 +313,6 @@ SkillTrace isn't the only project working on this problem, and an earlier versio
 - **[SkillSieve](https://arxiv.org/abs/2604.06550)** layers static triage (regex, AST, and metadata) with a multi-model LLM jury for the harder cases, again without a sandboxed dynamic-execution stage of its own.
 - **[SkillScan](https://github.com/NMitchem/SkillScan)** (March 2026) runs a three-stage pipeline: static analysis (59 YARA rules across 7 categories), an LLM "Predict" stage that has a model role-play the agent to simulate runtime behavior without executing anything (catching delayed/temporal triggers a single real invocation might miss), then a Docker sandbox "Test" stage using honeypot canary files (planted fake credentials; flags a skill that reads or exfiltrates them). Core difference: SkillTrace never simulates behavior, it only reports syscalls actually observed from a real sandboxed run. Worth naming plainly, not as a dig: SkillScan's own docs disclose its sandbox stage requires Docker Desktop and is "not available in CI," silently degrading to static-plus-predict-only without it — the same class of silent-degradation risk SkillTrace itself found and fixed in its own pipeline this year (a skill with no invocable candidate used to skip the sandbox with no visible signal; it now emits an explicit `sandbox_not_attempted` finding instead).
 - **["Skill Sentinel"](https://github.com/enkryptai/skill-scanner)** (Enkrypt AI) takes a purely LLM-based approach, no sandboxed execution stage at all. Closer in shape to SkillTrace's own `--semantic-review` alone than to its full pipeline.
-
-Three higher-star projects are worth naming here too, since star count alone would otherwise suggest they're more established prior art than they are for this specific comparison: **[medusa](https://github.com/Pantheon-Security/medusa)** (959★, 40,000+ pattern rules plus its own AI attack-signature scanner), **[SkillGuardrail](https://github.com/T-Zevin/SkillGuardrail)** (145★, a pre-install quarantine-and-policy-enforcement scanner), and **[claude-skill-antivirus](https://github.com/claude-world/claude-skill-antivirus)** (77★, 9 pattern-matching detection engines). All three are static/pattern-matching scanners with no sandboxed execution stage, exactly the category this project exists to go beyond, so the dynamic/decrypted-HTTPS differentiation above holds against them the same way it does against the smaller static-only tools named at the top of this section.
-
-Given all of that, this project's actual contribution isn't "the first dynamic scanner." What it offers concretely: decrypted-HTTPS visibility specifically (not just PCAP), and a lightweight, single-skill or CI-integration workflow rather than a registry-crawling research framework. It also hasn't been evaluated against any of the datasets above yet, a real gap, not a hidden one, see [Scope and limitations](#scope-and-limitations-v1).
 
 The same Docker-sandbox-plus-syscall-capture shape also shows up one layer down the stack, aimed at a different artifact: **[mcp-sec-audit](https://arxiv.org/abs/2603.21641)** and **[mcpsec](https://github.com/manthanghasadiya/mcpsec)** dynamically analyze MCP *servers* (the tool-providing processes an agent connects to), not agent skills (the natural-language instruction bundles covered here). Related technique, different attack surface, worth knowing about if you're evaluating coverage across both.
 
